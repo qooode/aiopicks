@@ -28,6 +28,7 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Ensure the repository root is on sys.path so tests can import the FastAPI app package.
 pythonpath = "."
 filterwarnings = [
     "ignore::DeprecationWarning",

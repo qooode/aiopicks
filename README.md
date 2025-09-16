@@ -109,16 +109,15 @@ docker run -d \
 
 ## 🧪 Local Development
 
-Follow the Python environment workflow while iterating:
+Follow the Option 2 workflow from above to create a virtual environment and install the project in editable mode. Once
+your shell is inside the activated `.venv`, start the auto-reloading development server with:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
 uvicorn app.main:app --reload --port 3000
 ```
 
-Environment variables in `.env` are loaded automatically on startup.
+Environment variables in `.env` are loaded automatically every time the server boots, so changes to the file take
+effect on the next restart.
 
 ### Running Tests
 
