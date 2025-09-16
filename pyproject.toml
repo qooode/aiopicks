@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aiopicks"
+version = "0.1.0"
+description = "AI-personalized Stremio catalogs powered by OpenRouter and Trakt"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "AIOPicks" }]
+dependencies = [
+    "fastapi>=0.110,<0.113",
+    "uvicorn[standard]>=0.29,<0.32",
+    "httpx>=0.27,<0.28",
+    "pydantic>=2.7,<3",
+    "pydantic-settings>=2.2,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2,<9",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

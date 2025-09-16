@@ -1,189 +1,124 @@
 <h1 align="center">AIOPicks</h1>
 
 <p align="center">
-  <strong>AI-powered personalized recommendations for your next binge.</strong>
-  <br />
-  AIOPicks generates dynamic movie and TV show catalogs based on your Trakt watch history using advanced AI models from OpenRouter.
+  <strong>AI-powered personalized recommendations for your next binge.</strong><br />
+  AIOPicks generates dynamic movie and TV show catalogs for Stremio using your Trakt history and
+  OpenRouter's <code>google/gemini-2.5-flash-lite</code> model.
 </p>
 
 ---
 
 ## ✨ What is AIOPicks?
 
-AIOPicks revolutionizes content discovery by creating Netflix-style personalized catalogs for Stremio. Instead of browsing endless generic lists, AIOPicks analyzes your Trakt watch history and generates AI-powered recommendations tailored specifically to your viewing patterns and preferences.
+AIOPicks is a FastAPI-powered Stremio addon that turns your Trakt watch history into AI-curated, ever-changing
+catalogs. Every refresh uses the Gemini 2.5 Flash Lite model on OpenRouter to craft brand-new themes, names, and
+recommendations so you never scroll the same rows twice.
 
-Using advanced AI models from OpenRouter, AIOPicks creates dynamic catalogs that refresh automatically, ensuring you always have fresh, personalized content to discover.
+Because everything runs on your own server, your data never leaves your control. Connect your Trakt account, provide an
+OpenRouter API key, and enjoy endlessly fresh discovery playlists.
 
 ## 🚀 Key Features
 
 ### 🤖 AI-Powered Personalization
-- **Trakt Integration**: Analyzes your complete watch history, ratings, and viewing patterns
-- **OpenRouter AI**: Leverages cutting-edge AI models (GPT-4, Claude, etc.) for intelligent recommendations
-- **Dynamic Generation**: No hardcoded lists - everything is AI-generated based on your unique preferences
-- **Privacy-Focused**: Your data stays yours - all processing happens on your instance
+- **Trakt Integration**: Pulls your watch history (movies & series) with extended metadata
+- **OpenRouter AI**: Uses `google/gemini-2.5-flash-lite` for imaginative yet grounded catalog ideas
+- **Randomized Catalogs**: Each refresh injects a random seed so names and picks are always surprising
+- **Privacy-Focused**: All history processing and AI prompts happen on your self-hosted instance
 
 ### 📊 User-Configurable Dynamic Catalogs
+AIOPicks invents themed rows with bespoke names and contents:
 
-AIOPicks generates personalized catalogs with AI-generated names you won't know beforehand:
+- **🌙 Midnight Mystery Flights** – *Atmospheric thrillers for after dark*
+- **🎭 Seoulful Stories** – *Emotional Korean dramas aligned with your taste*
+- **🔥 Weekend Questline** – *Series primed for marathon sessions*
+- **✨ Critics' Curveballs** – *Awarded picks you somehow missed*
 
-- **🌙 Your Late Night Thrillers** - *Perfect edge-of-your-seat content for late viewing*
-- **🎭 Hidden Korean Gems You'll Love** - *Underrated content based on your patterns*
-- **🔥 Weekend Binge Adventures** - *Series perfect for your weekend marathons*
-- **✨ Critically Acclaimed Surprises** - *Award-winning content matching your taste*
+### 🧰 Flexible Configuration
+- **Catalog Count**: Choose how many movie/series rows to generate (1-12)
+- **Refresh Interval**: Control how often the AI regenerates catalogs
+- **Caching**: Lightweight in-memory cache keeps Stremio responses snappy between refreshes
+- **Fallbacks**: If the AI call fails, the addon gracefully falls back to history-based mixes
 
-### � Flexible Configuration
-- **User-Configurable Count**: Choose 3-12 personalized catalogs
-- **Custom Refresh Intervals**: Set how often catalogs refresh (daily, weekly, monthly)
-- **AI Model Selection**: Choose from any OpenRouter model
-- **Smart Caching**: Efficient storage prevents unnecessary AI API calls
+## 🛠️ Prerequisites
+- Python 3.10+
+- A Trakt account with viewing history (OAuth device authentication recommended)
+- OpenRouter API key with access to `google/gemini-2.5-flash-lite`
+- (Optional) Docker if you prefer container deployment
 
-### 🎯 Advanced Personalization
-- **Viewing Pattern Analysis**: Learns from your binge habits and rating patterns
-- **Genre Preferences**: Adapts to your favorite and avoided genres
-- **Quality Standards**: Matches your preference for critically acclaimed vs. popular content
-- **Discovery Balance**: Balances familiar comfort picks with adventurous new discoveries
+## ⚙️ Configuration
 
-## 🚀 Getting Started
+Create a `.env` file (or copy `.env.sample`) with your credentials:
 
-### Prerequisites
-- Trakt account with viewing history
-- OpenRouter API key
-- Docker (recommended) or Node.js 20+
+```env
+OPENROUTER_API_KEY=your-openrouter-key
+OPENROUTER_MODEL=google/gemini-2.5-flash-lite
+TRAKT_CLIENT_ID=your-trakt-client-id
+TRAKT_ACCESS_TOKEN=your-trakt-access-token
+CATALOG_COUNT=6
+REFRESH_INTERVAL=43200  # seconds
+CACHE_TTL=1800          # seconds
+```
 
-### 1. Get Your API Keys
+> ℹ️ You can obtain a Trakt access token by creating a personal application and using the device code flow. Store the
+> long-lived access token for this addon.
 
-**Trakt API:**
-1. Visit [Trakt API Settings](https://trakt.tv/oauth/applications/new)
-2. Create a new application
-3. Note your Client ID and Client Secret
+## 🧪 Local Development
 
-**OpenRouter:**
-1. Sign up at [OpenRouter.ai](https://openrouter.ai)
-2. Generate an API key from your dashboard
-3. Choose your preferred AI models
-
-### 2. Deploy AIOPicks
-
-**Docker (Recommended):**
 ```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .[dev]
+cp .env.sample .env  # then edit with your keys
+uvicorn app.main:app --reload --port 3000
+```
+
+Open `http://localhost:3000/manifest.json` to confirm the addon is running. Install the manifest URL in Stremio to see
+the AI-generated catalogs.
+
+### Running Tests
+
+```bash
+pytest
+```
+
+## 🐳 Docker Quickstart
+
+```bash
+docker build -t aiopicks .
 docker run -d \
   --name aiopicks \
   -p 3000:3000 \
-  -e TRAKT_CLIENT_ID=your_client_id \
-  -e TRAKT_CLIENT_SECRET=your_client_secret \
-  -e OPENROUTER_API_KEY=your_api_key \
-  -e DEFAULT_MODEL=gpt-4o-mini \
-  -e REFRESH_INTERVAL=86400 \
-  aiopicks:latest
+  --env-file .env \
+  aiopicks
 ```
 
-**Docker Compose:**
-```yaml
-version: '3.8'
-services:
-  aiopicks:
-    build: .
-    ports:
-      - "3000:3000"
-    environment:
-      - TRAKT_CLIENT_ID=your_client_id
-      - TRAKT_CLIENT_SECRET=your_client_secret
-      - OPENROUTER_API_KEY=your_api_key
-      - DEFAULT_MODEL=gpt-4o-mini
-      - REFRESH_INTERVAL=86400
-      - DATABASE_URL=postgresql://user:password@db:5432/aiopicks
-    volumes:
-      - aiopicks_data:/app/data
-```
+## 🏗️ Architecture Overview
 
-**Development Setup:**
-```bash
-git clone <repository-url>
-cd aiopicks
-npm install
-cp .env.sample .env
-# Edit .env with your API keys
-npm run start:dev
-```
+- **FastAPI Server** (`app/main.py`): Implements Stremio manifest, catalog, and meta endpoints
+- **Catalog Service** (`app/services/catalog_generator.py`): Orchestrates Trakt ingestion, AI prompting, caching, and
+  background refresh
+- **Trakt Client** (`app/services/trakt.py`): Fetches and summarizes history with optional fallbacks
+- **OpenRouter Client** (`app/services/openrouter.py`): Calls Gemini 2.5 Flash Lite with structured prompts and parses
+  the JSON response
+- **Pydantic Models** (`app/models.py`): Validates AI output and converts it into Stremio-friendly payloads
 
-### 3. Configure Your Setup
-1. Open `http://localhost:3000/stremio/configure`
-2. Connect your Trakt account
-3. Configure AI model preferences
-4. Set refresh intervals and catalog preferences (3-12 catalogs)
-5. Install the generated addon URL in Stremio
+The service keeps a short-lived cache of the last generated catalogs. A background coroutine refreshes them on the
+interval you configure. If OpenRouter is unavailable, it falls back to simple mixes derived from your watch history.
 
-## 🔧 Configuration
+## 📦 API Surface
 
-### Environment Variables
-
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `TRAKT_CLIENT_ID` | Trakt API Client ID | - | ✅ |
-| `TRAKT_CLIENT_SECRET` | Trakt API Client Secret | - | ✅ |
-| `OPENROUTER_API_KEY` | OpenRouter API Key | - | ✅ |
-| `DEFAULT_MODEL` | Default AI model | `gpt-4o-mini` | ✅ |
-| `REFRESH_INTERVAL` | Catalog refresh interval (seconds) | `86400` (24h) | ✅ |
-| `DATABASE_URL` | Database connection string | SQLite | ❌ |
-| `REDIS_URL` | Redis connection string | - | ❌ |
-| `PORT` | Server port | `3000` | ❌ |
-
-### Supported AI Models
-AIOPicks supports any model available on OpenRouter:
-- `gpt-4o-mini` (recommended for cost efficiency)
-- `gpt-4o` (best quality)
-- `claude-3.5-sonnet` (excellent for creative recommendations)
-- `llama-3.1-70b-instruct` (open-source alternative)
-- And many more...
-
-## 🏗️ Architecture
-
-AIOPicks is built with a modern, scalable architecture:
-
-- **Core Engine**: TypeScript-based recommendation engine
-- **AI Integration**: OpenRouter API for model flexibility
-- **Data Layer**: PostgreSQL/SQLite with Redis caching
-- **Frontend**: Next.js configuration interface
-- **API Server**: Express.js with Stremio protocol support
-
-## 📈 How It Works
-
-1. **Data Collection**: Securely fetches your Trakt watch history and ratings
-2. **Pattern Analysis**: AI analyzes your viewing patterns, preferences, and habits
-3. **Catalog Generation**: Creates user-configurable personalized recommendation catalogs
-4. **Smart Caching**: Stores recommendations with configurable refresh intervals
-5. **Stremio Integration**: Serves catalogs through standard Stremio protocol
-
-## 🛠️ Development
-
-### Available Scripts
-
-- `npm run start:dev` - Start development server
-- `npm run start:frontend:dev` - Start frontend development server
-- `npm run build` - Build all packages
-- `npm run test` - Run tests
-- `npm run format` - Format code with Prettier
-
-### Project Structure
-
-```
-packages/
-├── core/           # TypeScript recommendation engine
-├── frontend/       # Next.js configuration interface
-└── server/         # Express.js API server
-```
+| Endpoint | Description |
+|----------|-------------|
+| `/manifest.json` | Advertises AI-generated catalogs and metadata to Stremio |
+| `/catalog/{type}/{id}.json` | Returns the metas array for a specific catalog |
+| `/meta/{type}/{id}.json` | Provides metadata for a specific entry |
+| `/healthz` | Lightweight readiness probe |
 
 ## ⚠️ Disclaimer
 
-AIOPicks is a content discovery tool that generates recommendations based on your viewing history. It does not host, store, or distribute any copyrighted content. The recommendations are for discovery purposes only. Users are responsible for accessing content through legitimate means and complying with all applicable laws.
-
-## 🙏 Credits
-
-This project builds upon the foundational work of:
-- **[Trakt.tv](https://trakt.tv)** for providing comprehensive viewing data APIs
-- **[OpenRouter.ai](https://openrouter.ai)** for democratizing access to advanced AI models
-- **[Stremio](https://stremio.com)** for the excellent media center platform
+AIOPicks is a discovery tool. It does not host or stream content—only suggests what to watch next based on your own
+history. Always access content through legal providers and comply with applicable laws.
 
 ---
 
-**Made for self-hosting enthusiasts who want Netflix-level personalized recommendations.**
+**Built for self-hosting enthusiasts chasing endlessly fresh watchlists.**
