@@ -94,10 +94,31 @@ uvicorn app.main:app --reload --port 3000
 Open `http://localhost:3000/manifest.json` to confirm the addon is running. Install the manifest URL in Stremio to see
 the AI-generated catalogs.
 
+### Option 3: Manual Docker CLI
+
+Prefer a one-off container instead of Compose? Build and run directly with Docker:
+
+```bash
+docker build -t aiopicks .
+docker run -d \
+  --name aiopicks \
+  -p 3000:3000 \
+  --env-file .env \
+  aiopicks
+```
+
 ## 🧪 Local Development
 
-Use the Python environment instructions above while developing locally. Run the FastAPI server with `uvicorn` in reload
-mode and iterate on the addon code. Environment variables are loaded from `.env` on startup.
+Follow the Python environment workflow while iterating:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .[dev]
+uvicorn app.main:app --reload --port 3000
+```
+
+Environment variables in `.env` are loaded automatically on startup.
 
 ### Running Tests
 
