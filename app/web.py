@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from textwrap import dedent
+from urllib.parse import urlparse
 
 from .config import Settings
 
@@ -294,6 +295,11 @@ CONFIG_TEMPLATE = dedent(
             const traktStatus = document.getElementById('trakt-status');
             const traktHint = document.getElementById('trakt-hint');
             const traktLoginAvailable = Boolean(defaults.traktLoginAvailable);
+            const traktCallbackOrigin = (defaults.traktCallbackOrigin || '').trim();
+            const traktOrigins = [window.location.origin];
+            if (traktCallbackOrigin && !traktOrigins.includes(traktCallbackOrigin)) {
+                traktOrigins.push(traktCallbackOrigin);
+            }
 
             const traktAuth = { accessToken: '', refreshToken: '' };
             let traktPending = false;
@@ -394,7 +400,7 @@ CONFIG_TEMPLATE = dedent(
             });
 
             window.addEventListener('message', (event) => {
-                if (event.origin !== window.location.origin) {
+                if (!traktOrigins.includes(event.origin)) {
                     return;
                 }
                 const data = event.data || {};
@@ -619,6 +625,12 @@ CONFIG_TEMPLATE = dedent(
 def render_config_page(settings: Settings) -> str:
     """Return the full HTML for the `/config` landing page."""
 
+    callback_origin = ""
+    if settings.trakt_redirect_uri:
+        parsed = urlparse(str(settings.trakt_redirect_uri))
+        if parsed.scheme and parsed.netloc:
+            callback_origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+
     defaults = {
         "appName": settings.app_name,
         "openrouterModel": settings.openrouter_model,
@@ -629,6 +641,7 @@ def render_config_page(settings: Settings) -> str:
         "traktLoginAvailable": bool(
             settings.trakt_client_id and settings.trakt_client_secret
         ),
+        "traktCallbackOrigin": callback_origin,
     }
     defaults_json = json.dumps(defaults).replace("</", "<\\/")
 
