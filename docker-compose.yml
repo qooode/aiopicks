@@ -1,7 +1,7 @@
 services:
   aiopicks:
     build:
-      context: .
+      context: https://github.com/qooode/aiopicks
     image: aiopicks:latest
     ports:
       - "3000:3000"
