@@ -83,6 +83,21 @@ pytest
 
 ## 🐳 Docker Quickstart
 
+### Using Docker Compose (recommended)
+
+```bash
+cp .env.sample .env  # then edit with your keys
+docker compose up -d --build
+```
+
+This command builds the image, starts the `aiopicks` service, and automatically loads
+environment variables from `.env`. Visit
+`http://localhost:3000/manifest.json` to verify the addon is running. Tail
+logs with `docker compose logs -f aiopicks` and stop the stack when you are
+finished with `docker compose down`.
+
+### Manual Docker commands
+
 ```bash
 docker build -t aiopicks .
 docker run -d \

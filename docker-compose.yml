@@ -1,0 +1,12 @@
+services:
+  aiopicks:
+    build:
+      context: .
+    image: aiopicks:latest
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=production
+    restart: unless-stopped
