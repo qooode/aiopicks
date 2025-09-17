@@ -182,9 +182,9 @@ def register_routes(fastapi_app: FastAPI) -> None:
 
         _prune_expired_states(fastapi_app)
         state = secrets.token_urlsafe(32)
-        redirect_uri = str(request.url_for("trakt_oauth_callback"))
+        default_origin, redirect_uri = _resolve_trakt_redirect(request)
         origin_header = request.headers.get("origin")
-        origin = origin_header or str(request.base_url).rstrip("/")
+        origin = (origin_header.rstrip("/")) if origin_header else default_origin
         fastapi_app.state.trakt_oauth_states[state] = {
             "origin": origin,
             "redirect_uri": redirect_uri,
@@ -226,10 +226,9 @@ def register_routes(fastapi_app: FastAPI) -> None:
             )
 
         state_data = fastapi_app.state.trakt_oauth_states.pop(state, None)
-        origin = (state_data or {}).get("origin") or str(request.base_url).rstrip("/")
-        redirect_uri = (state_data or {}).get("redirect_uri") or str(
-            request.url_for("trakt_oauth_callback")
-        )
+        default_origin, default_redirect = _resolve_trakt_redirect(request)
+        origin = (state_data or {}).get("origin") or default_origin
+        redirect_uri = (state_data or {}).get("redirect_uri") or default_redirect
 
         if not state_data or state_data.get("expires_at", 0) < time.time():
             payload = {
@@ -321,6 +320,50 @@ def _prune_expired_states(fastapi_app: FastAPI) -> None:
     expired = [key for key, info in store.items() if info.get("expires_at", 0) <= now]
     for key in expired:
         store.pop(key, None)
+
+
+def _resolve_trakt_redirect(request: Request) -> tuple[str, str]:
+    origin, base = _resolve_external_base(request)
+    path = request.app.url_path_for("trakt_oauth_callback")
+    return origin, f"{base}{path}"
+
+
+def _resolve_external_base(request: Request) -> tuple[str, str]:
+    headers = request.headers
+    scheme = _first_forwarded_value(headers.get("x-forwarded-proto")) or request.url.scheme
+
+    host = _first_forwarded_value(headers.get("x-forwarded-host"))
+    if not host:
+        host_header = headers.get("host")
+        host = _first_forwarded_value(host_header) if host_header else None
+    if not host:
+        host = request.url.netloc
+
+    port = _first_forwarded_value(headers.get("x-forwarded-port"))
+    if port and ":" not in host:
+        default_port = "443" if scheme == "https" else "80"
+        if port != default_port:
+            host = f"{host}:{port}"
+
+    origin = f"{scheme}://{host}".rstrip("/")
+
+    prefix = (
+        _first_forwarded_value(headers.get("x-forwarded-prefix"))
+        or request.scope.get("root_path")
+        or ""
+    )
+    if prefix and not prefix.startswith("/"):
+        prefix = f"/{prefix}"
+    prefix = prefix.rstrip("/")
+
+    base = f"{origin}{prefix}" if prefix else origin
+    return origin, base
+
+
+def _first_forwarded_value(header_value: str | None) -> str | None:
+    if not header_value:
+        return None
+    return header_value.split(",", 1)[0].strip()
 
 
 def _render_oauth_popup(target_origin: str, payload: dict[str, Any]) -> str:
