@@ -7,13 +7,15 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from .config import settings
+from .database import Database
 from .services.catalog_generator import CatalogService
+from .services.catalog_generator import ManifestConfig
 from .services.openrouter import OpenRouterClient
 from .services.trakt import TraktClient
 from .web import render_config_page
@@ -54,17 +56,24 @@ async def lifespan(_: FastAPI):
         )
     )
 
+    database = Database(settings.database_url)
+    await database.create_all()
+
     trakt = TraktClient(settings, trakt_client)
     openrouter = OpenRouterClient(settings, openrouter_client)
-    catalog_service = CatalogService(settings, trakt, openrouter)
+    catalog_service = CatalogService(
+        settings, trakt, openrouter, database.session_factory
+    )
 
     app.state.catalog_service = catalog_service
+    app.state.database = database
     await catalog_service.start()
 
     try:
         yield
     finally:  # pragma: no cover - teardown path exercised at runtime
         await catalog_service.stop()
+        await database.dispose()
         await exit_stack.aclose()
 
 
@@ -104,13 +113,22 @@ def register_routes(fastapi_app: FastAPI) -> None:
         return HTMLResponse(render_config_page(settings))
 
     @fastapi_app.get("/manifest.json")
-    async def manifest() -> dict[str, Any]:
+    async def manifest(request: Request) -> dict[str, Any]:
         service = get_catalog_service(fastapi_app)
-        catalogs = await service.list_manifest_catalogs()
+        try:
+            config = ManifestConfig.from_query(request.query_params)
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail=exc.errors()) from exc
+
+        try:
+            profile_state, catalogs = await service.list_manifest_catalogs(config)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        name_suffix = profile_state.openrouter_model
         return {
             "id": "com.aiopicks.python",
             "version": "1.0.0",
-            "name": f"{settings.app_name} (Gemini 2.5 Flash Lite)",
+            "name": f"{settings.app_name} ({name_suffix})",
             "description": (
                 "Dynamic, AI-randomized catalogs powered by OpenRouter's Google Gemini 2.5 "
                 "Flash Lite model and your Trakt history."
@@ -122,25 +140,39 @@ def register_routes(fastapi_app: FastAPI) -> None:
         }
 
     @fastapi_app.get("/catalog/{content_type}/{catalog_id}.json")
-    async def catalog(content_type: str, catalog_id: str) -> JSONResponse:
+    async def catalog(
+        request: Request, content_type: str, catalog_id: str
+    ) -> JSONResponse:
         if content_type not in {"movie", "series"}:
             raise HTTPException(status_code=400, detail="Unsupported content type")
         service = get_catalog_service(fastapi_app)
         try:
-            payload = await service.get_catalog_payload(content_type, catalog_id)
+            config = ManifestConfig.from_query(request.query_params)
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail=exc.errors()) from exc
+        try:
+            payload = await service.get_catalog_payload(config, content_type, catalog_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse(payload)
 
     @fastapi_app.get("/meta/{content_type}/{meta_id}.json")
-    async def meta(content_type: str, meta_id: str) -> JSONResponse:
+    async def meta(request: Request, content_type: str, meta_id: str) -> JSONResponse:
         if content_type not in {"movie", "series"}:
             raise HTTPException(status_code=400, detail="Unsupported content type")
         service = get_catalog_service(fastapi_app)
         try:
-            meta_payload = await service.find_meta(content_type, meta_id)
+            config = ManifestConfig.from_query(request.query_params)
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail=exc.errors()) from exc
+        try:
+            meta_payload = await service.find_meta(config, content_type, meta_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse({"meta": meta_payload})
 
     @fastapi_app.post("/api/trakt/device-code")

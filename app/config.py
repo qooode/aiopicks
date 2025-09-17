@@ -40,6 +40,10 @@ class Settings(BaseSettings):
         default="https://openrouter.ai/api/v1", alias="OPENROUTER_API_URL"
     )
 
+    database_url: str = Field(
+        default="sqlite+aiosqlite:///./aiopicks.db", alias="DATABASE_URL"
+    )
+
     environment: Literal["development", "production"] = Field(
         default="development", alias="ENVIRONMENT"
     )

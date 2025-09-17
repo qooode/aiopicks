@@ -85,11 +85,18 @@ class OpenRouterClient:
         summary: dict[str, Any],
         *,
         seed: str,
+        api_key: str | None = None,
+        model: str | None = None,
     ) -> CatalogBundle:
         """Generate new catalogs using the configured model."""
 
         catalog_count = summary.get("catalog_count", self._settings.catalog_count)
         profile = summary.get("profile", {})
+
+        resolved_model = model or self._settings.openrouter_model
+        resolved_key = api_key or self._settings.openrouter_api_key
+        if not resolved_key:
+            raise RuntimeError("OpenRouter API key is required to generate catalogs")
 
         prompt = USER_PROMPT_TEMPLATE.format(
             generated_at=summary.get("generated_at"),
@@ -106,7 +113,7 @@ class OpenRouterClient:
         )
 
         payload = {
-            "model": self._settings.openrouter_model,
+            "model": resolved_model,
             "temperature": 1.1,
             "top_p": 0.9,
             "max_output_tokens": 2_500,
@@ -117,7 +124,7 @@ class OpenRouterClient:
         }
 
         headers = {
-            "Authorization": f"Bearer {self._settings.openrouter_api_key}",
+            "Authorization": f"Bearer {resolved_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://github.com/aiopicks/aiopicks",
             "X-Title": "AIOPicks Python",
