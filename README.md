@@ -53,6 +53,7 @@ Create a `.env` file (or copy `.env.sample`) with your credentials:
 OPENROUTER_API_KEY=your-openrouter-key
 OPENROUTER_MODEL=google/gemini-2.5-flash-lite
 TRAKT_CLIENT_ID=your-trakt-client-id
+TRAKT_CLIENT_SECRET=your-trakt-client-secret
 TRAKT_ACCESS_TOKEN=your-trakt-access-token
 CATALOG_COUNT=6
 REFRESH_INTERVAL=43200  # seconds
@@ -60,7 +61,8 @@ CACHE_TTL=1800          # seconds
 ```
 
 > ℹ️ You can obtain a Trakt access token by creating a personal application and using the device code flow. Store the
-> long-lived access token for this addon.
+> long-lived access token for this addon. The `/config` helper automatically uses `TRAKT_CLIENT_ID` and
+> `TRAKT_CLIENT_SECRET` from the server environment when minting device codes—secrets never touch the browser.
 
 ## 🧪 Local Development
 

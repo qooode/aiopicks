@@ -296,17 +296,13 @@ CONFIG_TEMPLATE = dedent(
             </section>
             <section class="card">
                 <h2>Trakt device login helper</h2>
-                <p class="description">No need to leave the page—launch the device flow to mint a long-lived token for
-                your users. The secret never leaves their browser.</p>
+                <p class="description">No need to leave the page—launch the device flow with the server's stored Trakt
+                credentials. Secrets never touch the browser.</p>
                 <ol class="step-list">
-                    <li>Paste your Trakt <strong>client ID</strong> and <strong>client secret</strong>.</li>
-                    <li>Click <em>Start device login</em> and follow the instructions at the verification link.</li>
-                    <li>Once approved, copy the access token straight into the manifest builder.</li>
+                    <li>Click <em>Start device login</em> to fetch a fresh device code.</li>
+                    <li>Follow the verification link and approve the request on Trakt.</li>
+                    <li>Copy the access token straight into the manifest builder.</li>
                 </ol>
-                <div class="field">
-                    <label for="trakt-client-secret">Trakt client secret <span class="helper">The one provided in your Trakt app</span></label>
-                    <input id="trakt-client-secret" type="password" autocomplete="off" spellcheck="false" />
-                </div>
                 <div class="actions">
                     <button id="start-trakt-login" type="button">Start device login</button>
                 </div>
@@ -360,7 +356,11 @@ CONFIG_TEMPLATE = dedent(
         const traktCopyRefreshButton = document.getElementById('copy-refresh-token');
         const traktAccessOutput = document.getElementById('trakt-access-value');
         const traktRefreshOutput = document.getElementById('trakt-refresh-value');
-        const traktClientSecret = document.getElementById('trakt-client-secret');
+
+        const serverTraktClientId = (defaults.traktClientId || '').trim();
+        const deviceFlowAvailable = Boolean(
+            defaults.traktDeviceAuthEnabled && serverTraktClientId
+        );
 
         const refreshDefaults = String(defaults.refreshIntervalSeconds || 43200);
         const cacheDefaults = String(defaults.responseCacheSeconds || 1800);
@@ -370,6 +370,15 @@ CONFIG_TEMPLATE = dedent(
         catalogValue.textContent = catalogSlider.value;
         traktClientId.value = defaults.traktClientId || '';
         traktAccessToken.value = defaults.traktAccessToken || '';
+
+        if (!deviceFlowAvailable) {
+            traktLoginButton.disabled = true;
+            traktLoginButton.textContent = 'Device login unavailable';
+            showTraktStatus(
+                'Server is not configured with a Trakt client ID and secret. Set TRAKT_CLIENT_ID and TRAKT_CLIENT_SECRET to enable device login.',
+                true
+            );
+        }
 
         ensureOption(refreshSelect, refreshDefaults, formatSeconds(Number(refreshDefaults)));
         ensureOption(cacheSelect, cacheDefaults, formatSeconds(Number(cacheDefaults)));
@@ -500,10 +509,20 @@ CONFIG_TEMPLATE = dedent(
         let countdownTimer = null;
 
         traktLoginButton.addEventListener('click', async () => {
-            const clientId = traktClientId.value.trim();
-            const clientSecret = traktClientSecret.value.trim();
-            if (!clientId || !clientSecret) {
-                showTraktStatus('Provide your Trakt client ID and client secret first.', true);
+            if (!deviceFlowAvailable) {
+                showTraktStatus(
+                    'Server is not configured with a Trakt client ID and secret. Ask the administrator to set TRAKT_CLIENT_ID and TRAKT_CLIENT_SECRET.',
+                    true
+                );
+                return;
+            }
+
+            const clientId = serverTraktClientId;
+            if (!clientId) {
+                showTraktStatus(
+                    'Server is missing a Trakt client ID. Set TRAKT_CLIENT_ID in the environment to continue.',
+                    true
+                );
                 return;
             }
 
@@ -533,7 +552,7 @@ CONFIG_TEMPLATE = dedent(
                 traktTokenOutput.classList.add('hidden');
                 startCountdown();
                 showTraktStatus('Enter the code on Trakt and approve access.');
-                schedulePoll(clientId, clientSecret);
+                schedulePoll(clientId);
             } catch (error) {
                 console.error(error);
                 showTraktStatus('Could not reach the Trakt API. Check your connection and try again.', true);
@@ -586,14 +605,17 @@ CONFIG_TEMPLATE = dedent(
             traktCountdown.textContent = `Code expires in ${minutes}m ${String(seconds).padStart(2, '0')}s`;
         }
 
-        function schedulePoll(clientId, clientSecret) {
+        function schedulePoll(clientId) {
             if (traktState.pollTimer) {
                 clearTimeout(traktState.pollTimer);
             }
-            traktState.pollTimer = setTimeout(() => pollForToken(clientId, clientSecret), traktState.pollInterval);
+            traktState.pollTimer = setTimeout(
+                () => pollForToken(clientId),
+                traktState.pollInterval
+            );
         }
 
-        async function pollForToken(clientId, clientSecret) {
+        async function pollForToken(clientId) {
             if (!traktState.deviceCode) {
                 traktLoginButton.disabled = false;
                 return;
@@ -604,7 +626,6 @@ CONFIG_TEMPLATE = dedent(
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         client_id: clientId,
-                        client_secret: clientSecret,
                         device_code: traktState.deviceCode
                     })
                 });
@@ -634,13 +655,13 @@ CONFIG_TEMPLATE = dedent(
                 const errorCode = extractErrorCode(payload);
                 if (errorCode === 'authorization_pending') {
                     showTraktStatus('Waiting for you to approve the device on Trakt…');
-                    schedulePoll(clientId, clientSecret);
+                    schedulePoll(clientId);
                     return;
                 }
                 if (errorCode === 'slow_down') {
                     traktState.pollInterval += 5000;
                     showTraktStatus('Trakt asked us to slow down—retrying shortly…');
-                    schedulePoll(clientId, clientSecret);
+                    schedulePoll(clientId);
                     return;
                 }
                 if (errorCode === 'expired_token') {
@@ -704,6 +725,9 @@ def render_config_page(settings: Settings) -> str:
         "responseCacheSeconds": settings.response_cache_seconds,
         "traktClientId": settings.trakt_client_id or "",
         "traktAccessToken": settings.trakt_access_token or "",
+        "traktDeviceAuthEnabled": bool(
+            settings.trakt_client_id and settings.trakt_client_secret
+        ),
     }
     defaults_json = json.dumps(defaults).replace("</", "<\\/")
 
