@@ -21,20 +21,36 @@ class TraktClient:
         self._settings = settings
         self._client = http_client
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(
+        self,
+        *,
+        client_id: str | None = None,
+        access_token: str | None = None,
+    ) -> dict[str, str]:
         headers = {
             "trakt-api-version": "2",
         }
-        if self._settings.trakt_client_id:
-            headers["trakt-api-key"] = self._settings.trakt_client_id
-        if self._settings.trakt_access_token:
-            headers["Authorization"] = f"Bearer {self._settings.trakt_access_token}"
+        resolved_client_id = client_id or self._settings.trakt_client_id
+        resolved_access_token = access_token or self._settings.trakt_access_token
+        if resolved_client_id:
+            headers["trakt-api-key"] = resolved_client_id
+        if resolved_access_token:
+            headers["Authorization"] = f"Bearer {resolved_access_token}"
         return headers
 
-    async def fetch_history(self, content_type: str) -> list[dict[str, Any]]:
+    async def fetch_history(
+        self,
+        content_type: str,
+        *,
+        client_id: str | None = None,
+        access_token: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Fetch the user's viewing history."""
 
-        if not (self._settings.trakt_client_id and self._settings.trakt_access_token):
+        resolved_client_id = client_id or self._settings.trakt_client_id
+        resolved_access_token = access_token or self._settings.trakt_access_token
+
+        if not (resolved_client_id and resolved_access_token):
             logger.info("Trakt credentials missing, returning empty history for %s", content_type)
             return []
 
@@ -43,7 +59,11 @@ class TraktClient:
             "limit": self._settings.trakt_history_limit,
             "extended": "full",
         }
-        response = await self._client.get(url, headers=self._headers(), params=params)
+        response = await self._client.get(
+            url,
+            headers=self._headers(client_id=resolved_client_id, access_token=resolved_access_token),
+            params=params,
+        )
         if response.status_code >= 400:
             logger.warning("Failed to fetch Trakt history for %s: %s", content_type, response.text)
             return []
