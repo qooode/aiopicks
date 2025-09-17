@@ -55,6 +55,8 @@ OPENROUTER_MODEL=google/gemini-2.5-flash-lite
 TRAKT_CLIENT_ID=your-trakt-client-id
 TRAKT_CLIENT_SECRET=your-trakt-client-secret
 TRAKT_ACCESS_TOKEN=your-trakt-access-token
+# Optional: override the detected redirect URL if you proxy through a custom domain
+TRAKT_REDIRECT_URI=https://your-domain.example/api/trakt/callback
 CATALOG_COUNT=6
 REFRESH_INTERVAL=43200  # seconds
 CACHE_TTL=1800          # seconds

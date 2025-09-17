@@ -21,6 +21,9 @@ class Settings(BaseSettings):
         default=None, alias="TRAKT_CLIENT_SECRET"
     )
     trakt_access_token: str | None = Field(default=None, alias="TRAKT_ACCESS_TOKEN")
+    trakt_redirect_uri: HttpUrl | None = Field(
+        default=None, alias="TRAKT_REDIRECT_URI"
+    )
     trakt_history_limit: int = Field(default=500, alias="TRAKT_HISTORY_LIMIT", ge=10, le=2000)
 
     openrouter_api_key: str | None = Field(
