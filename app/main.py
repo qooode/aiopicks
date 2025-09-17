@@ -1,16 +1,19 @@
 """Entry point for the FastAPI-powered Stremio addon."""
 
 from __future__ import annotations
-
+import json
 import logging
+import secrets
+import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 
 from .config import settings
 from .database import Database
@@ -24,20 +27,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app: FastAPI
-
-
-class DeviceCodeRequest(BaseModel):
-    """Payload for requesting a Trakt device code."""
-
-    client_id: str | None = Field(default=None, min_length=5, max_length=128)
-
-
-class DeviceTokenRequest(BaseModel):
-    """Payload for polling a Trakt device token."""
-
-    client_id: str | None = Field(default=None, min_length=5, max_length=128)
-    client_secret: str | None = Field(default=None, min_length=5, max_length=160)
-    device_code: str = Field(min_length=5, max_length=160)
 
 
 @asynccontextmanager
@@ -91,6 +80,8 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
+
+    fastapi_app.state.trakt_oauth_states: dict[str, dict[str, Any]] = {}
 
     register_routes(fastapi_app)
     return fastapi_app
@@ -175,101 +166,137 @@ def register_routes(fastapi_app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse({"meta": meta_payload})
 
-    @fastapi_app.post("/api/trakt/device-code")
-    async def trakt_device_code(payload: DeviceCodeRequest) -> dict[str, Any]:
-        client_id = payload.client_id or settings.trakt_client_id
-        if not client_id:
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "error": "trakt_credentials_missing",
-                    "description": (
-                        "Trakt client ID is not configured on the server. "
-                        "Set TRAKT_CLIENT_ID to enable device login."
-                    ),
-                },
-            )
-
-        request_body = {"client_id": client_id}
-        try:
-            response = await _post_trakt_oauth("/oauth/device/code", request_body)
-        except httpx.HTTPError as exc:
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "error": "network_error",
-                    "description": "Unable to reach Trakt. Please try again shortly.",
-                },
-            ) from exc
-
-        data = _response_json(response)
-        if response.status_code >= 400:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=_format_trakt_error(
-                    data, "Trakt rejected the device code request."
-                ),
-            )
-
-        verification = (
-            data.get("verification_url")
-            or data.get("verification_uri")
-            or data.get("verification_uri_complete")
-            or "https://trakt.tv/activate"
-        )
-        expires = _coerce_int(data.get("expires_in"), default=600)
-        interval = _coerce_int(data.get("interval"), default=5)
-
-        return {
-            "device_code": str(data.get("device_code") or ""),
-            "user_code": str(data.get("user_code") or ""),
-            "verification_url": str(verification),
-            "expires_in": expires,
-            "interval": interval,
-        }
-
-    @fastapi_app.post("/api/trakt/device-token")
-    async def trakt_device_token(payload: DeviceTokenRequest) -> dict[str, Any]:
-        client_id = payload.client_id or settings.trakt_client_id
-        client_secret = payload.client_secret or settings.trakt_client_secret
-        if not client_id or not client_secret:
+    @fastapi_app.post("/api/trakt/login-url")
+    async def trakt_login_url(request: Request) -> dict[str, str]:
+        if not (settings.trakt_client_id and settings.trakt_client_secret):
             raise HTTPException(
                 status_code=503,
                 detail={
                     "error": "trakt_credentials_missing",
                     "description": (
                         "Trakt client ID and secret must be configured on the server "
-                        "to complete device login."
+                        "to enable sign in."
                     ),
                 },
             )
 
+        _prune_expired_states(fastapi_app)
+        state = secrets.token_urlsafe(32)
+        redirect_uri = str(request.url_for("trakt_oauth_callback"))
+        origin_header = request.headers.get("origin")
+        origin = origin_header or str(request.base_url).rstrip("/")
+        fastapi_app.state.trakt_oauth_states[state] = {
+            "origin": origin,
+            "redirect_uri": redirect_uri,
+            "expires_at": time.time() + 600,
+        }
+
+        query = urlencode(
+            {
+                "response_type": "code",
+                "client_id": settings.trakt_client_id,
+                "redirect_uri": redirect_uri,
+                "state": state,
+            }
+        )
+        return {"url": f"{settings.trakt_authorize_url}?{query}"}
+
+    @fastapi_app.get(
+        "/api/trakt/callback",
+        response_class=HTMLResponse,
+        name="trakt_oauth_callback",
+    )
+    async def trakt_oauth_callback(
+        request: Request,
+        code: str | None = None,
+        state: str | None = None,
+        error: str | None = None,
+        error_description: str | None = None,
+    ) -> HTMLResponse:
+        _prune_expired_states(fastapi_app)
+        if not state:
+            payload = {
+                "status": "error",
+                "error": "missing_state",
+                "error_description": "State parameter was not returned by Trakt.",
+            }
+            return HTMLResponse(
+                _render_oauth_popup(str(request.base_url).rstrip("/"), payload),
+                status_code=400,
+            )
+
+        state_data = fastapi_app.state.trakt_oauth_states.pop(state, None)
+        origin = (state_data or {}).get("origin") or str(request.base_url).rstrip("/")
+        redirect_uri = (state_data or {}).get("redirect_uri") or str(
+            request.url_for("trakt_oauth_callback")
+        )
+
+        if not state_data or state_data.get("expires_at", 0) < time.time():
+            payload = {
+                "status": "error",
+                "error": "state_expired",
+                "error_description": "The sign-in session has expired. Please try again.",
+            }
+            return HTMLResponse(
+                _render_oauth_popup(origin, payload),
+                status_code=400,
+            )
+
+        if error:
+            payload = {
+                "status": "error",
+                "error": error,
+                "error_description": error_description
+                or "Trakt reported an error during sign in.",
+            }
+            return HTMLResponse(_render_oauth_popup(origin, payload), status_code=400)
+
+        if not code:
+            payload = {
+                "status": "error",
+                "error": "missing_code",
+                "error_description": "Trakt did not provide an authorisation code.",
+            }
+            return HTMLResponse(
+                _render_oauth_popup(origin, payload),
+                status_code=400,
+            )
+
         body = {
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "device_code": payload.device_code,
+            "code": code,
+            "client_id": settings.trakt_client_id,
+            "client_secret": settings.trakt_client_secret,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
         }
         try:
-            response = await _post_trakt_oauth("/oauth/device/token", body)
-        except httpx.HTTPError as exc:
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "error": "network_error",
-                    "description": "Unable to reach Trakt. Please try again shortly.",
-                },
-            ) from exc
+            response = await _post_trakt_oauth("/oauth/token", body)
+        except httpx.HTTPError:
+            payload = {
+                "status": "error",
+                "error": "network_error",
+                "error_description": "Unable to reach Trakt. Please try again shortly.",
+            }
+            return HTMLResponse(_render_oauth_popup(origin, payload), status_code=502)
 
         data = _response_json(response)
         if response.status_code >= 400:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=_format_trakt_error(
-                    data, "Trakt rejected the token request."
+            formatted = _format_trakt_error(
+                data, "Trakt rejected the authorisation request."
+            )
+            payload = {
+                "status": "error",
+                "error": formatted.get("error", "trakt_error"),
+                "error_description": formatted.get(
+                    "description", "Trakt rejected the authorisation request."
                 ),
+            }
+            return HTMLResponse(
+                _render_oauth_popup(origin, payload),
+                status_code=response.status_code,
             )
 
-        payload_map = {
+        token_payload = {
             "access_token": data.get("access_token"),
             "refresh_token": data.get("refresh_token"),
             "expires_in": _coerce_int(data.get("expires_in")),
@@ -277,7 +304,54 @@ def register_routes(fastapi_app: FastAPI) -> None:
             "token_type": data.get("token_type"),
             "created_at": _coerce_int(data.get("created_at")),
         }
-        return {key: value for key, value in payload_map.items() if value not in {None, ""}}
+        payload = {
+            "status": "success",
+            "tokens": {
+                key: value
+                for key, value in token_payload.items()
+                if value not in {None, ""}
+            },
+        }
+        return HTMLResponse(_render_oauth_popup(origin, payload))
+
+
+def _prune_expired_states(fastapi_app: FastAPI) -> None:
+    store = getattr(fastapi_app.state, "trakt_oauth_states", {})
+    now = time.time()
+    expired = [key for key, info in store.items() if info.get("expires_at", 0) <= now]
+    for key in expired:
+        store.pop(key, None)
+
+
+def _render_oauth_popup(target_origin: str, payload: dict[str, Any]) -> str:
+    message = {"source": "trakt-oauth", **payload}
+    json_payload = json.dumps(message).replace("</", "<\\/")
+    origin = target_origin or "*"
+    return f"""
+<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+    <meta charset=\"utf-8\" />
+    <title>Trakt Sign In</title>
+</head>
+<body>
+    <p>You can close this window and return to the configuration tab.</p>
+    <script>
+        (function() {{
+            const payload = {json_payload};
+            try {{
+                if (window.opener && !window.opener.closed) {{
+                    window.opener.postMessage(payload, {json.dumps(origin)});
+                }}
+            }} catch (err) {{
+                console.error('Unable to notify opener', err);
+            }}
+            window.close();
+        }})();
+    </script>
+</body>
+</html>
+"""
 
 
 def _coerce_int(value: Any, *, default: int | None = None) -> int | None:

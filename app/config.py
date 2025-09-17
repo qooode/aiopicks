@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     trakt_api_url: HttpUrl = Field(
         default="https://api.trakt.tv", alias="TRAKT_API_URL"
     )
+    trakt_authorize_url: HttpUrl = Field(
+        default="https://trakt.tv/oauth/authorize", alias="TRAKT_AUTHORIZE_URL"
+    )
     openrouter_api_url: HttpUrl = Field(
         default="https://openrouter.ai/api/v1", alias="OPENROUTER_API_URL"
     )
