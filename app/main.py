@@ -9,17 +9,33 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field
 
 from .config import settings
 from .services.catalog_generator import CatalogService
 from .services.openrouter import OpenRouterClient
 from .services.trakt import TraktClient
+from .web import render_config_page
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app: FastAPI
+
+
+class DeviceCodeRequest(BaseModel):
+    """Payload for requesting a Trakt device code."""
+
+    client_id: str = Field(min_length=5, max_length=128)
+
+
+class DeviceTokenRequest(BaseModel):
+    """Payload for polling a Trakt device token."""
+
+    client_id: str = Field(min_length=5, max_length=128)
+    client_secret: str = Field(min_length=5, max_length=160)
+    device_code: str = Field(min_length=5, max_length=160)
 
 
 @asynccontextmanager
@@ -63,8 +79,8 @@ def create_app() -> FastAPI:
     fastapi_app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_methods=["GET"],
-        allow_headers=["*"]
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
     )
 
     register_routes(fastapi_app)
@@ -82,6 +98,10 @@ def register_routes(fastapi_app: FastAPI) -> None:
     @fastapi_app.get("/healthz")
     async def healthcheck() -> dict[str, str]:
         return {"status": "ok"}
+
+    @fastapi_app.get("/config", response_class=HTMLResponse)
+    async def config_page() -> HTMLResponse:
+        return HTMLResponse(render_config_page(settings))
 
     @fastapi_app.get("/manifest.json")
     async def manifest() -> dict[str, Any]:
@@ -122,6 +142,129 @@ def register_routes(fastapi_app: FastAPI) -> None:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return JSONResponse({"meta": meta_payload})
+
+    @fastapi_app.post("/api/trakt/device-code")
+    async def trakt_device_code(payload: DeviceCodeRequest) -> dict[str, Any]:
+        try:
+            response = await _post_trakt_oauth("/oauth/device/code", payload.model_dump())
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "network_error",
+                    "description": "Unable to reach Trakt. Please try again shortly.",
+                },
+            ) from exc
+
+        data = _response_json(response)
+        if response.status_code >= 400:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=_format_trakt_error(
+                    data, "Trakt rejected the device code request."
+                ),
+            )
+
+        verification = (
+            data.get("verification_url")
+            or data.get("verification_uri")
+            or data.get("verification_uri_complete")
+            or "https://trakt.tv/activate"
+        )
+        expires = _coerce_int(data.get("expires_in"), default=600)
+        interval = _coerce_int(data.get("interval"), default=5)
+
+        return {
+            "device_code": str(data.get("device_code") or ""),
+            "user_code": str(data.get("user_code") or ""),
+            "verification_url": str(verification),
+            "expires_in": expires,
+            "interval": interval,
+        }
+
+    @fastapi_app.post("/api/trakt/device-token")
+    async def trakt_device_token(payload: DeviceTokenRequest) -> dict[str, Any]:
+        body = payload.model_dump()
+        try:
+            response = await _post_trakt_oauth("/oauth/device/token", body)
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "network_error",
+                    "description": "Unable to reach Trakt. Please try again shortly.",
+                },
+            ) from exc
+
+        data = _response_json(response)
+        if response.status_code >= 400:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=_format_trakt_error(
+                    data, "Trakt rejected the token request."
+                ),
+            )
+
+        payload_map = {
+            "access_token": data.get("access_token"),
+            "refresh_token": data.get("refresh_token"),
+            "expires_in": _coerce_int(data.get("expires_in")),
+            "scope": data.get("scope"),
+            "token_type": data.get("token_type"),
+            "created_at": _coerce_int(data.get("created_at")),
+        }
+        return {key: value for key, value in payload_map.items() if value not in {None, ""}}
+
+
+def _coerce_int(value: Any, *, default: int | None = None) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+async def _post_trakt_oauth(path: str, payload: dict[str, Any]) -> httpx.Response:
+    headers = {
+        "trakt-api-version": "2",
+        "Content-Type": "application/json",
+    }
+    client_id = payload.get("client_id")
+    if isinstance(client_id, str) and client_id:
+        headers["trakt-api-key"] = client_id
+    async with httpx.AsyncClient(
+        base_url=str(settings.trakt_api_url),
+        timeout=httpx.Timeout(20.0, connect=10.0),
+    ) as client:
+        return await client.post(path, json=payload, headers=headers)
+
+
+def _response_json(response: httpx.Response) -> dict[str, Any]:
+    try:
+        data = response.json()
+    except ValueError:
+        return {}
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+def _format_trakt_error(data: dict[str, Any], fallback: str) -> dict[str, str]:
+    if not data:
+        return {"error": "trakt_error", "description": fallback}
+    error = str(
+        data.get("error")
+        or data.get("error_description")
+        or data.get("message")
+        or "trakt_error"
+    )
+    description = str(
+        data.get("error_description")
+        or data.get("message")
+        or data.get("hint")
+        or data.get("description")
+        or fallback
+    )
+    return {"error": error, "description": description}
 
 
 app = create_app()
