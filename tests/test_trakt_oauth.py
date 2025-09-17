@@ -15,6 +15,7 @@ from app.main import CatalogService, create_app
 def _test_client(monkeypatch):
     monkeypatch.setattr(settings, "trakt_client_id", "client")
     monkeypatch.setattr(settings, "trakt_client_secret", "secret")
+    monkeypatch.setattr(settings, "trakt_redirect_uri", None)
 
     async def _noop_start(self):  # type: ignore[override]
         return None
@@ -64,3 +65,13 @@ def test_trakt_login_url_honours_forwarded_prefix(monkeypatch) -> None:
         assert response.status_code == 200
         redirect_uri = _extract_redirect(response.json()["url"])
         assert redirect_uri == "https://example.com/addon/api/trakt/callback"
+
+
+def test_trakt_login_url_uses_configured_redirect(monkeypatch) -> None:
+    override = "https://override.example/custom/callback"
+    with _test_client(monkeypatch) as client:
+        monkeypatch.setattr(settings, "trakt_redirect_uri", override)
+        response = client.post("/api/trakt/login-url")
+        assert response.status_code == 200
+        redirect_uri = _extract_redirect(response.json()["url"])
+        assert redirect_uri == override

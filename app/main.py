@@ -7,7 +7,7 @@ import secrets
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -323,6 +323,11 @@ def _prune_expired_states(fastapi_app: FastAPI) -> None:
 
 
 def _resolve_trakt_redirect(request: Request) -> tuple[str, str]:
+    if settings.trakt_redirect_uri:
+        parsed = urlparse(str(settings.trakt_redirect_uri))
+        origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+        return origin, str(settings.trakt_redirect_uri)
+
     origin, base = _resolve_external_base(request)
     path = request.app.url_path_for("trakt_oauth_callback")
     return origin, f"{base}{path}"
