@@ -399,12 +399,14 @@ CONFIG_TEMPLATE = dedent(
                 showTraktHint('');
             });
 
-            window.addEventListener('message', (event) => {
-                if (!traktOrigins.includes(event.origin)) {
+            let traktBroadcastChannel = null;
+
+            function handleTraktOauthPayload(rawPayload, origin) {
+                const data = rawPayload || {};
+                if (data.source !== 'trakt-oauth') {
                     return;
                 }
-                const data = event.data || {};
-                if (data.source !== 'trakt-oauth') {
+                if (origin && !traktOrigins.includes(origin)) {
                     return;
                 }
                 traktPending = false;
@@ -421,6 +423,23 @@ CONFIG_TEMPLATE = dedent(
                         'error'
                     );
                     showTraktHint('Try again and ensure you approve the request in Trakt.');
+                }
+            }
+
+            window.addEventListener('message', (event) => {
+                handleTraktOauthPayload(event.data, event.origin || '');
+            });
+
+            if ('BroadcastChannel' in window) {
+                traktBroadcastChannel = new BroadcastChannel('aiopicks.trakt-oauth');
+                traktBroadcastChannel.addEventListener('message', (event) => {
+                    handleTraktOauthPayload(event.data, '');
+                });
+            }
+
+            window.addEventListener('beforeunload', () => {
+                if (traktBroadcastChannel) {
+                    traktBroadcastChannel.close();
                 }
             });
 

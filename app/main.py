@@ -387,14 +387,32 @@ def _render_oauth_popup(target_origin: str, payload: dict[str, Any]) -> str:
     <script>
         (function() {{
             const payload = {json_payload};
+            const targetOrigin = {json.dumps(origin)};
+            let notified = false;
             try {{
                 if (window.opener && !window.opener.closed) {{
-                    window.opener.postMessage(payload, {json.dumps(origin)});
+                    window.opener.postMessage(payload, targetOrigin);
+                    notified = true;
                 }}
             }} catch (err) {{
-                console.error('Unable to notify opener', err);
+                console.error('Unable to notify opener via postMessage', err);
             }}
-            window.close();
+            try {{
+                if ('BroadcastChannel' in window) {{
+                    const channel = new BroadcastChannel('aiopicks.trakt-oauth');
+                    channel.postMessage(payload);
+                    channel.close();
+                    notified = true;
+                }}
+            }} catch (err) {{
+                console.error('Unable to broadcast Trakt OAuth payload', err);
+            }}
+            if (!notified) {{
+                console.warn('Trakt OAuth payload could not be delivered to the opener context.');
+            }}
+            setTimeout(() => {{
+                window.close();
+            }}, 150);
         }})();
     </script>
 </body>
