@@ -20,7 +20,9 @@ class Settings(BaseSettings):
     trakt_access_token: str | None = Field(default=None, alias="TRAKT_ACCESS_TOKEN")
     trakt_history_limit: int = Field(default=500, alias="TRAKT_HISTORY_LIMIT", ge=10, le=2000)
 
-    openrouter_api_key: str = Field(alias="OPENROUTER_API_KEY")
+    openrouter_api_key: str | None = Field(
+        default=None, alias="OPENROUTER_API_KEY"
+    )
     openrouter_model: str = Field(
         default="google/gemini-2.5-flash-lite", alias="OPENROUTER_MODEL"
     )
