@@ -467,9 +467,10 @@ class CatalogService:
             now = datetime.utcnow()
             if profile is None:
                 if not self._settings.openrouter_api_key:
-                    raise RuntimeError(
-                        "OPENROUTER_API_KEY must be configured for the default profile"
+                    logger.warning(
+                        "Skipping default profile creation because OPENROUTER_API_KEY is not set"
                     )
+                    return
                 profile = Profile(
                     id="default",
                     openrouter_api_key=self._settings.openrouter_api_key,
