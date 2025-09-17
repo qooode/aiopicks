@@ -1,0 +1,13 @@
+services:
+  aiopicks:
+    build:
+      context: https://github.com/qooode/aiopicks.git#main
+      dockerfile: Dockerfile
+    image: aiopicks:latest
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=production
+    restart: unless-stopped
