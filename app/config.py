@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     server_port: int = Field(default=3000, alias="PORT")
 
     trakt_client_id: str | None = Field(default=None, alias="TRAKT_CLIENT_ID")
+    trakt_client_secret: str | None = Field(
+        default=None, alias="TRAKT_CLIENT_SECRET"
+    )
     trakt_access_token: str | None = Field(default=None, alias="TRAKT_ACCESS_TOKEN")
     trakt_history_limit: int = Field(default=500, alias="TRAKT_HISTORY_LIMIT", ge=10, le=2000)
 

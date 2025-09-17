@@ -29,14 +29,14 @@ app: FastAPI
 class DeviceCodeRequest(BaseModel):
     """Payload for requesting a Trakt device code."""
 
-    client_id: str = Field(min_length=5, max_length=128)
+    client_id: str | None = Field(default=None, min_length=5, max_length=128)
 
 
 class DeviceTokenRequest(BaseModel):
     """Payload for polling a Trakt device token."""
 
-    client_id: str = Field(min_length=5, max_length=128)
-    client_secret: str = Field(min_length=5, max_length=160)
+    client_id: str | None = Field(default=None, min_length=5, max_length=128)
+    client_secret: str | None = Field(default=None, min_length=5, max_length=160)
     device_code: str = Field(min_length=5, max_length=160)
 
 
@@ -177,8 +177,22 @@ def register_routes(fastapi_app: FastAPI) -> None:
 
     @fastapi_app.post("/api/trakt/device-code")
     async def trakt_device_code(payload: DeviceCodeRequest) -> dict[str, Any]:
+        client_id = payload.client_id or settings.trakt_client_id
+        if not client_id:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "trakt_credentials_missing",
+                    "description": (
+                        "Trakt client ID is not configured on the server. "
+                        "Set TRAKT_CLIENT_ID to enable device login."
+                    ),
+                },
+            )
+
+        request_body = {"client_id": client_id}
         try:
-            response = await _post_trakt_oauth("/oauth/device/code", payload.model_dump())
+            response = await _post_trakt_oauth("/oauth/device/code", request_body)
         except httpx.HTTPError as exc:
             raise HTTPException(
                 status_code=502,
@@ -216,7 +230,25 @@ def register_routes(fastapi_app: FastAPI) -> None:
 
     @fastapi_app.post("/api/trakt/device-token")
     async def trakt_device_token(payload: DeviceTokenRequest) -> dict[str, Any]:
-        body = payload.model_dump()
+        client_id = payload.client_id or settings.trakt_client_id
+        client_secret = payload.client_secret or settings.trakt_client_secret
+        if not client_id or not client_secret:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "trakt_credentials_missing",
+                    "description": (
+                        "Trakt client ID and secret must be configured on the server "
+                        "to complete device login."
+                    ),
+                },
+            )
+
+        body = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "device_code": payload.device_code,
+        }
         try:
             response = await _post_trakt_oauth("/oauth/device/token", body)
         except httpx.HTTPError as exc:
