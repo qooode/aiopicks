@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl
 
@@ -17,7 +17,8 @@ class CatalogItem(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    title: str = Field(
+    title: str | None = Field(
+        default=None,
         validation_alias=AliasChoices("title", "name"),
         serialization_alias="name",
     )
@@ -26,9 +27,18 @@ class CatalogItem(BaseModel):
     poster: HttpUrl | None = None
     background: HttpUrl | None = None
     year: int | None = None
-    trakt_id: int | None = None
-    imdb_id: str | None = None
-    tmdb_id: int | None = None
+    trakt_id: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("trakt_id", "traktId"),
+    )
+    imdb_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("imdb_id", "imdbId"),
+    )
+    tmdb_id: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("tmdb_id", "tmdbId"),
+    )
     weight: float | None = None
     runtime_minutes: int | None = None
     genres: list[str] = Field(default_factory=list)
@@ -43,7 +53,15 @@ class CatalogItem(BaseModel):
         )
         if not base_id and self.tmdb_id:
             base_id = f"tmdb:{self.tmdb_id}"
-        return ensure_unique_meta_id(base_id, f"{catalog_id}-{self.title}", index)
+        return ensure_unique_meta_id(
+            base_id, f"{catalog_id}-{self.display_name()}", index
+        )
+
+    def model_post_init(self, __context: Any) -> None:
+        """Ensure a fallback title is available after validation."""
+
+        if not self.title:
+            object.__setattr__(self, "title", self._fallback_title())
 
     def to_catalog_stub(self, catalog_id: str, index: int) -> dict[str, object]:
         """Return a Stremio-compatible meta object for catalog listings."""
@@ -51,16 +69,35 @@ class CatalogItem(BaseModel):
         meta: dict[str, object] = {
             "id": self.build_meta_id(catalog_id, index),
             "type": self.type,
+            "name": self.display_name(),
         }
 
         if self.imdb_id:
             meta["imdbId"] = self.imdb_id
+            meta["imdb_id"] = self.imdb_id
         if self.trakt_id:
             meta["traktId"] = self.trakt_id
         if self.tmdb_id:
             meta["tmdbId"] = self.tmdb_id
+            meta["tmdb_id"] = self.tmdb_id
 
         return meta
+
+    def _fallback_title(self) -> str:
+        """Derive a placeholder title from known identifiers."""
+
+        if self.imdb_id:
+            return self.imdb_id
+        if self.trakt_id:
+            return f"Trakt {self.trakt_id}"
+        if self.tmdb_id:
+            return f"TMDB {self.tmdb_id}"
+        return "Untitled"
+
+    def display_name(self) -> str:
+        """Return a non-empty title for catalog previews."""
+
+        return self.title or self._fallback_title()
 
 
 class Catalog(BaseModel):
@@ -119,6 +156,7 @@ class Catalog(BaseModel):
             "type": self.type,
             "id": self.id,
             "name": self.title,
+            "idProperty": "imdb_id",
             "extra": [],
         }
 
