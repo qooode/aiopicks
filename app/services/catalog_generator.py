@@ -41,6 +41,11 @@ class ManifestConfig(BaseModel):
         default=None,
         validation_alias=AliasChoices("openrouterModel", "openRouterModel"),
     )
+    manifest_name: str | None = Field(
+        default=None,
+        max_length=120,
+        validation_alias=AliasChoices("manifestName", "addonName"),
+    )
     catalog_count: int | None = Field(
         default=None,
         ge=1,
@@ -109,6 +114,7 @@ class ManifestConfig(BaseModel):
         "profile_id",
         "openrouter_key",
         "openrouter_model",
+        "manifest_name",
         "trakt_client_id",
         "trakt_access_token",
         mode="before",
