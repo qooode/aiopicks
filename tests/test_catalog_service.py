@@ -173,8 +173,6 @@ def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:
             {
                 "id": "tt1234567",
                 "type": "movie",
-                "name": "Sample Movie",
-                "description": "A test entry",
                 "imdbId": "tt1234567",
             }
         ]
