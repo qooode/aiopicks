@@ -24,6 +24,7 @@ OpenRouter API key, and enjoy endlessly fresh discovery playlists.
 - **OpenRouter AI**: Uses `google/gemini-2.5-flash-lite` for imaginative yet grounded catalog ideas
 - **Randomized Catalogs**: Each refresh injects a random seed so names and picks are always surprising
 - **Privacy-Focused**: All history processing and AI prompts happen on your self-hosted instance
+- **Catalog-Only Manifest**: Advertises just the catalog resource so Stremio can merge in metadata from Cinemeta or other providers you install.
 
 ### 📊 User-Configurable Dynamic Catalogs
 AIOPicks invents themed rows with bespoke names and contents:
@@ -113,7 +114,7 @@ docker run -d \
 
 ## 🏗️ Architecture Overview
 
-- **FastAPI Server** (`app/main.py`): Implements Stremio manifest, catalog, and meta endpoints
+- **FastAPI Server** (`app/main.py`): Implements Stremio manifest and catalog endpoints (metadata endpoint remains available for debugging but is not advertised)
 - **Catalog Service** (`app/services/catalog_generator.py`): Orchestrates Trakt ingestion, AI prompting, caching, and
   background refresh
 - **Trakt Client** (`app/services/trakt.py`): Fetches and summarizes history with optional fallbacks
@@ -128,9 +129,9 @@ interval you configure. If OpenRouter is unavailable, it falls back to simple mi
 
 | Endpoint | Description |
 |----------|-------------|
-| `/manifest.json` | Advertises AI-generated catalogs and metadata to Stremio |
+| `/manifest.json` | Advertises AI-generated catalogs to Stremio (metadata comes from Cinemeta or other addons) |
 | `/catalog/{type}/{id}.json` | Returns the metas array for a specific catalog |
-| `/meta/{type}/{id}.json` | Provides metadata for a specific entry |
+| `/meta/{type}/{id}.json` | (Optional) Internal metadata endpoint for debugging |
 | `/healthz` | Lightweight readiness probe |
 
 ## ⚠️ Disclaimer
