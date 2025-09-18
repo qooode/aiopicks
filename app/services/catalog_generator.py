@@ -248,34 +248,6 @@ class CatalogService:
         profile_ref = state.id if state is not None else "unknown"
         raise KeyError(f"Catalog {catalog_id} not found for profile {profile_ref}")
 
-    async def find_meta(
-        self,
-        config: ManifestConfig,
-        content_type: str,
-        meta_id: str,
-    ) -> dict[str, Any]:
-        """Locate a specific meta entry within the stored catalogs."""
-
-        state: ProfileState | None = None
-        try:
-            state = await self.prepare_profile(config, wait_for_refresh=False)
-        except ValueError:
-            state = None
-
-        if state is not None:
-            catalogs = await self._load_catalogs(state.id, content_type=content_type)
-            for catalog in catalogs:
-                for index, item in enumerate(catalog.items):
-                    meta = item.to_meta(catalog.id, index)
-                    if meta["id"] == meta_id:
-                        return meta
-
-        fallback_meta = await self._find_meta_across_profiles(content_type, meta_id)
-        if fallback_meta is not None:
-            return fallback_meta
-        profile_ref = state.id if state is not None else "unknown"
-        raise KeyError(f"Meta {meta_id} not found for profile {profile_ref}")
-
     async def prepare_profile(
         self, config: ManifestConfig, *, wait_for_refresh: bool = True
     ) -> ProfileState:
@@ -926,42 +898,6 @@ class CatalogService:
             if updated:
                 await session.commit()
             return candidate
-
-    async def _find_meta_across_profiles(
-        self, content_type: str, meta_id: str
-    ) -> dict[str, Any] | None:
-        async with self._session_factory() as session:
-            stmt = select(CatalogRecord).where(CatalogRecord.content_type == content_type)
-            result = await session.execute(stmt)
-            records = result.scalars().all()
-            updated = False
-            for record in records:
-                scope, base_id = self._split_scoped_catalog_id(record.catalog_id)
-                if scope != record.profile_id:
-                    new_id = self._scoped_catalog_id(record.profile_id, base_id)
-                    record.catalog_id = new_id
-                    payload = record.payload if isinstance(record.payload, dict) else {}
-                    record.payload = {**payload, "id": new_id}
-                    updated = True
-                try:
-                    catalog = Catalog.model_validate(record.payload)
-                except ValidationError as exc:
-                    logger.warning(
-                        "Stored catalog %s for profile %s is invalid: %s",
-                        record.catalog_id,
-                        record.profile_id,
-                        exc,
-                    )
-                    continue
-                for index, item in enumerate(catalog.items):
-                    meta = item.to_meta(catalog.id, index)
-                    if meta.get("id") == meta_id:
-                        if updated:
-                            await session.commit()
-                        return meta
-            if updated:
-                await session.commit()
-        return None
 
     def _extract_image(self, media: dict[str, Any], *, key: str = "poster") -> str | None:
         images = media.get("images") or {}
