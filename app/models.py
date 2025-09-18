@@ -71,6 +71,15 @@ class CatalogItem(BaseModel):
             "name": self.display_title(),
         }
 
+        if self.overview:
+            meta["description"] = self.overview
+        if self.poster:
+            meta["poster"] = str(self.poster)
+        if self.background:
+            meta["background"] = str(self.background)
+        if self.year:
+            meta["year"] = self.year
+
         if self.imdb_id:
             meta["imdbId"] = self.imdb_id
             meta["imdb_id"] = self.imdb_id

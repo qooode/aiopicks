@@ -27,6 +27,9 @@ def test_catalog_from_ai_payload_generates_ids():
         "id": "tt0359950",
         "type": "movie",
         "name": "The Secret Life of Walter Mitty",
+        "description": "A daydreamer's journey",
+        "poster": "https://example.com/poster.jpg",
+        "year": 2013,
         "imdbId": "tt0359950",
         "imdb_id": "tt0359950",
     }
