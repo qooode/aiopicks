@@ -19,37 +19,41 @@ CONFIG_TEMPLATE = dedent(
     <title>__APP_NAME__ · Configuration</title>
         <style>
         :root {
-            color-scheme: light dark;
+            color-scheme: dark light;
             font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-            --page: #f5f5f4;
-            --surface: #ffffff;
-            --surface-raised: #f7f7f7;
-            --surface-strong: #ededed;
-            --text-primary: #111827;
-            --text-muted: #6b7280;
-            --outline: rgba(17, 24, 39, 0.08);
-            --outline-strong: rgba(17, 24, 39, 0.16);
-            --shadow-soft: rgba(15, 23, 42, 0.08);
-            --shadow-strong: rgba(15, 23, 42, 0.16);
-            --accent: #1c1f24;
-            --accent-contrast: #f9fafb;
-            --focus-ring: rgba(17, 24, 39, 0.16);
+            --page: #05070f;
+            --surface: rgba(13, 17, 28, 0.86);
+            --surface-raised: rgba(19, 24, 37, 0.82);
+            --surface-strong: rgba(26, 32, 46, 0.92);
+            --text-primary: #f8fafc;
+            --text-muted: #9ca3af;
+            --outline: rgba(148, 163, 184, 0.16);
+            --outline-strong: rgba(148, 163, 184, 0.28);
+            --shadow-soft: rgba(2, 6, 23, 0.32);
+            --shadow-strong: rgba(2, 6, 23, 0.58);
+            --accent: #d7ff5b;
+            --accent-soft: rgba(215, 255, 91, 0.22);
+            --accent-contrast: #05070f;
+            --focus-ring: rgba(215, 255, 91, 0.32);
+            --divider: rgba(148, 163, 184, 0.14);
         }
         @media (prefers-color-scheme: dark) {
             :root {
-                --page: #0b1220;
-                --surface: rgba(15, 23, 42, 0.86);
-                --surface-raised: rgba(30, 41, 59, 0.82);
-                --surface-strong: rgba(51, 65, 85, 0.78);
-                --text-primary: #e2e8f0;
+                --page: #05070f;
+                --surface: rgba(13, 17, 28, 0.9);
+                --surface-raised: rgba(21, 28, 44, 0.84);
+                --surface-strong: rgba(28, 35, 55, 0.88);
+                --text-primary: #f8fafc;
                 --text-muted: #94a3b8;
                 --outline: rgba(148, 163, 184, 0.18);
-                --outline-strong: rgba(148, 163, 184, 0.32);
+                --outline-strong: rgba(148, 163, 184, 0.34);
                 --shadow-soft: rgba(2, 6, 23, 0.42);
-                --shadow-strong: rgba(2, 6, 23, 0.58);
-                --accent: #e2e8f0;
+                --shadow-strong: rgba(2, 6, 23, 0.64);
+                --accent: #d7ff5b;
+                --accent-soft: rgba(215, 255, 91, 0.25);
                 --accent-contrast: #020617;
-                --focus-ring: rgba(148, 163, 184, 0.28);
+                --focus-ring: rgba(215, 255, 91, 0.42);
+                --divider: rgba(148, 163, 184, 0.16);
             }
         }
         * {
@@ -58,11 +62,14 @@ CONFIG_TEMPLATE = dedent(
         body {
             margin: 0;
             min-height: 100vh;
-            background: var(--page);
+            background: radial-gradient(circle at 15% 20%, rgba(111, 255, 216, 0.08), transparent 45%),
+                radial-gradient(circle at 85% 15%, rgba(215, 255, 91, 0.12), transparent 42%),
+                radial-gradient(circle at 75% 85%, rgba(120, 174, 255, 0.08), transparent 48%),
+                var(--page);
             color: var(--text-primary);
             line-height: 1.65;
             -webkit-font-smoothing: antialiased;
-            padding: 0 1.75rem 2.5rem;
+            padding: 0 1.75rem 2.75rem;
         }
         a {
             color: inherit;
@@ -74,59 +81,97 @@ CONFIG_TEMPLATE = dedent(
             text-decoration-color: var(--accent);
         }
         main {
-            width: min(940px, 100%);
+            width: min(1040px, 100%);
             margin: 0 auto;
-            padding: 4rem 0 4.5rem;
+            padding: 4.5rem 0 4.75rem;
             display: flex;
             flex-direction: column;
-            gap: 2.5rem;
+            gap: 3rem;
         }
         header {
+            position: relative;
+            overflow: hidden;
             display: flex;
             flex-direction: column;
-            gap: 1.25rem;
-            padding: 3rem;
-            border-radius: 32px;
-            background: var(--surface);
-            box-shadow: 0 48px 96px -72px var(--shadow-strong);
+            gap: 1.75rem;
+            padding: 3.25rem;
+            border-radius: 34px;
+            background: linear-gradient(140deg, rgba(15, 23, 42, 0.85), rgba(15, 23, 42, 0.68)), var(--surface);
+            box-shadow: 0 48px 120px -60px var(--shadow-strong);
+            border: 1px solid var(--outline);
+        }
+        header::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background: radial-gradient(circle at 78% 25%, rgba(215, 255, 91, 0.25), transparent 55%),
+                radial-gradient(circle at 12% 75%, rgba(120, 174, 255, 0.18), transparent 55%);
+            mix-blend-mode: screen;
+            opacity: 0.9;
         }
         header h1 {
             margin: 0;
-            font-size: clamp(2.4rem, 5vw, 3.4rem);
-            letter-spacing: -0.035em;
+            font-size: clamp(2.6rem, 5.5vw, 3.6rem);
+            letter-spacing: -0.04em;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
         }
         header p {
             margin: 0;
             max-width: 620px;
             color: var(--text-muted);
-            font-size: 1.05rem;
+            font-size: 1.08rem;
         }
-        .pill {
+        .hero-label {
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            font-size: 0.8rem;
+            font-size: 0.78rem;
             font-weight: 600;
-            letter-spacing: 0.08em;
+            letter-spacing: 0.12em;
             text-transform: uppercase;
-            padding: 0.5rem 1rem;
+            padding: 0.55rem 1.1rem;
             border-radius: 999px;
-            background: var(--surface-raised);
+            background: rgba(15, 23, 42, 0.65);
             color: var(--text-muted);
+            border: 1px solid var(--outline);
+        }
+        .hero-highlight {
+            position: relative;
+            padding: 0.35rem 0.9rem;
+            border-radius: 14px;
+            background: linear-gradient(90deg, rgba(215, 255, 91, 0.45), rgba(120, 174, 255, 0.45));
+            color: var(--accent-contrast);
+            text-shadow: 0 12px 32px rgba(4, 6, 12, 0.32);
         }
         .grid {
-            display: flex;
-            flex-direction: column;
-            gap: 2.25rem;
+            display: grid;
+            gap: 2.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
         }
         .card {
+            position: relative;
             display: flex;
             flex-direction: column;
-            gap: 1.25rem;
+            gap: 1.5rem;
             background: var(--surface);
-            border-radius: 28px;
-            padding: 2.75rem;
-            box-shadow: 0 40px 96px -72px var(--shadow-soft);
+            border-radius: 30px;
+            padding: 2.85rem;
+            box-shadow: 0 44px 104px -68px var(--shadow-soft);
+            border: 1px solid var(--outline);
+            overflow: hidden;
+        }
+        .card::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background: radial-gradient(circle at 20% -5%, rgba(215, 255, 91, 0.18), transparent 55%),
+                radial-gradient(circle at 110% 30%, rgba(120, 174, 255, 0.16), transparent 62%);
+            mix-blend-mode: screen;
+            opacity: 0.8;
         }
         .card h2 {
             margin: 0;
@@ -136,8 +181,8 @@ CONFIG_TEMPLATE = dedent(
         .card p.description {
             margin: 0;
             color: var(--text-muted);
-            font-size: 1rem;
-            line-height: 1.7;
+            font-size: 1.02rem;
+            line-height: 1.75;
         }
         .card-intro {
             display: flex;
@@ -148,14 +193,14 @@ CONFIG_TEMPLATE = dedent(
             display: flex;
             flex-direction: column;
             gap: 1rem;
-            padding: 1.35rem 1.6rem;
+            padding: 1.5rem 1.75rem;
             border-radius: 22px;
-            background: var(--surface-raised);
-            box-shadow: 0 22px 44px -34px var(--shadow-soft);
+            background: linear-gradient(145deg, rgba(18, 25, 41, 0.92), rgba(18, 25, 41, 0.74));
+            box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.08), 0 22px 48px -36px var(--shadow-soft);
         }
         .card-section h3 {
             margin: 0;
-            font-size: 1.05rem;
+            font-size: 1.08rem;
             letter-spacing: -0.01em;
         }
         .field {
@@ -180,32 +225,35 @@ CONFIG_TEMPLATE = dedent(
         input[type="text"],
         select {
             width: 100%;
-            background: var(--surface-raised);
+            background: rgba(11, 16, 27, 0.65);
             border: none;
             border-radius: 16px;
             color: var(--text-primary);
-            padding: 0.75rem 1rem;
+            padding: 0.8rem 1.05rem;
             font-size: 1rem;
             box-shadow: inset 0 0 0 1px var(--outline);
-            transition: box-shadow 0.2s ease, background-color 0.2s ease;
+            transition: box-shadow 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
         }
         input[type="text"]:hover,
         select:hover {
-            box-shadow: inset 0 0 0 1px var(--outline-strong);
+            box-shadow: inset 0 0 0 1px var(--outline-strong), 0 0 0 1px rgba(215, 255, 91, 0.08);
+            transform: translateY(-1px);
         }
         input[type="text"]:focus-visible,
         select:focus-visible {
             outline: none;
             box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 6px var(--focus-ring);
-            background: var(--surface);
+            background: rgba(11, 16, 27, 0.82);
         }
         input[type="range"] {
             width: 100%;
             accent-color: var(--accent);
+            background: transparent;
         }
         .range-value {
             font-weight: 600;
             font-size: 0.95rem;
+            color: var(--accent);
         }
         .actions {
             display: flex;
@@ -217,34 +265,34 @@ CONFIG_TEMPLATE = dedent(
             appearance: none;
             border: none;
             border-radius: 18px;
-            padding: 0.85rem 1.75rem;
-            background: var(--accent);
+            padding: 0.95rem 1.9rem;
+            background: linear-gradient(120deg, rgba(215, 255, 91, 0.95), rgba(120, 174, 255, 0.9));
             color: var(--accent-contrast);
             font-weight: 600;
             font-size: 0.95rem;
-            letter-spacing: 0.01em;
+            letter-spacing: 0.02em;
             cursor: pointer;
-            transition: transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
-            box-shadow: 0 28px 54px -40px var(--shadow-strong);
+            transition: transform 0.18s ease, box-shadow 0.2s ease, filter 0.2s ease;
+            box-shadow: 0 28px 58px -34px var(--shadow-strong);
         }
         button:hover:not(:disabled) {
             transform: translateY(-1px);
-            box-shadow: 0 32px 68px -48px var(--shadow-strong);
-            filter: brightness(1.02);
+            box-shadow: 0 32px 78px -42px var(--shadow-strong);
+            filter: brightness(1.05);
         }
         button:focus-visible {
             outline: none;
             box-shadow: 0 0 0 6px var(--focus-ring);
         }
         button.secondary {
-            background: var(--surface);
+            background: rgba(10, 14, 25, 0.85);
             color: var(--text-primary);
-            box-shadow: 0 24px 52px -44px var(--shadow-soft);
+            box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.28), 0 24px 52px -44px var(--shadow-soft);
         }
         button.secondary:hover:not(:disabled) {
             filter: none;
-            background: var(--surface);
-            box-shadow: 0 28px 64px -52px var(--shadow-soft);
+            background: rgba(10, 14, 25, 0.92);
+            box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.34), 0 28px 64px -52px var(--shadow-soft);
         }
         button:disabled {
             cursor: not-allowed;
@@ -259,53 +307,55 @@ CONFIG_TEMPLATE = dedent(
         }
         .notice {
             margin-bottom: 1rem;
-            padding: 1rem 1.25rem;
+            padding: 1rem 1.3rem;
             border-radius: 18px;
-            background: var(--surface-raised);
+            background: rgba(10, 14, 25, 0.72);
             color: var(--text-primary);
-            box-shadow: 0 20px 36px -30px var(--shadow-soft);
+            box-shadow: inset 0 0 0 1px rgba(215, 255, 91, 0.12), 0 20px 44px -32px var(--shadow-soft);
         }
         .status {
             margin-top: 0.85rem;
             font-size: 0.95rem;
             color: var(--text-primary);
             min-height: 1.2em;
-            padding: 0.6rem 0.85rem;
-            border-radius: 14px;
-            background: var(--surface-raised);
-            box-shadow: 0 16px 32px -28px var(--shadow-soft);
+            padding: 0.75rem 1rem;
+            border-radius: 16px;
+            background: rgba(10, 14, 25, 0.7);
+            box-shadow: inset 0 0 0 1px var(--outline);
         }
         .status.error {
             color: inherit;
+            box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.35);
         }
         .status.success {
             color: inherit;
+            box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.28);
         }
         .preview {
-            background: var(--surface-raised);
-            border-radius: 18px;
-            padding: 1.2rem 1.35rem;
+            background: rgba(9, 13, 23, 0.8);
+            border-radius: 20px;
+            padding: 1.3rem 1.45rem;
             margin-top: 1rem;
             font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
             font-size: 0.9rem;
             word-break: break-word;
             color: var(--text-primary);
-            box-shadow: 0 24px 48px -38px var(--shadow-soft);
+            box-shadow: inset 0 0 0 1px var(--divider), 0 24px 48px -34px var(--shadow-soft);
         }
         .hidden {
             display: none !important;
         }
         @media (max-width: 720px) {
             body {
-                padding: 0 1.25rem 2rem;
+                padding: 0 1.25rem 2.25rem;
             }
             main {
-                padding: 3rem 0 3.5rem;
-                gap: 2.25rem;
+                padding: 3.5rem 0 3.75rem;
+                gap: 2.5rem;
             }
             header,
             .card {
-                padding: 2rem;
+                padding: 2.25rem;
             }
             .actions {
                 flex-direction: column;
@@ -320,9 +370,9 @@ CONFIG_TEMPLATE = dedent(
     <body>
         <main>
             <header>
-                <p class="pill">Stremio Add-on</p>
-                <h1>Configure __APP_NAME__</h1>
-                <p>Connect your Trakt account, tune the catalog cadence, and grab an install-ready manifest without leaving this page.</p>
+                <span class="hero-label">Stremio Add-on</span>
+                <h1>Make <span class="hero-highlight">__APP_NAME__</span> shine</h1>
+                <p>Connect your Trakt account, fine tune catalog generation, and copy an install-ready manifest from a single, polished control center.</p>
             </header>
             <div class="grid">
                 <section class="card" id="trakt-card">
