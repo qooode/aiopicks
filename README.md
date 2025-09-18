@@ -36,6 +36,7 @@ AIOPicks invents themed rows with bespoke names and contents:
 
 ### 🧰 Flexible Configuration
 - **Catalog Count**: Choose how many movie/series rows to generate (1-12)
+- **Manifest Name**: Override the add-on title shown inside Stremio without exposing model details
 - **Refresh Interval**: Control how often the AI regenerates catalogs
 - **Caching**: Lightweight in-memory cache keeps Stremio responses snappy between refreshes
 - **Fallbacks**: If the AI call fails, the addon gracefully falls back to history-based mixes
