@@ -247,6 +247,10 @@ CONFIG_TEMPLATE = dedent(
                     <input id="config-catalog-count" type="range" min="1" max="12" step="1" />
                 </div>
                 <div class="field">
+                    <label for="config-catalog-items">Items per catalog <span class="range-value" id="catalog-items-value"></span></label>
+                    <input id="config-catalog-items" type="range" min="4" max="100" step="1" />
+                </div>
+                <div class="field">
                     <label for="config-refresh-interval">Refresh cadence <span class="helper">How often Gemini rethinks the catalogs</span></label>
                     <select id="config-refresh-interval">
                         <option value="3600">Every hour</option>
@@ -284,6 +288,8 @@ CONFIG_TEMPLATE = dedent(
             const openrouterModel = document.getElementById('config-openrouter-model');
             const catalogSlider = document.getElementById('config-catalog-count');
             const catalogValue = document.getElementById('catalog-count-value');
+            const catalogItemsSlider = document.getElementById('config-catalog-items');
+            const catalogItemsValue = document.getElementById('catalog-items-value');
             const refreshSelect = document.getElementById('config-refresh-interval');
             const cacheSelect = document.getElementById('config-cache-ttl');
             const prepareProfileButton = document.getElementById('prepare-profile');
@@ -315,6 +321,9 @@ CONFIG_TEMPLATE = dedent(
             openrouterModel.value = defaults.openrouterModel || '';
             catalogSlider.value = defaults.catalogCount || catalogSlider.min || 1;
             catalogValue.textContent = catalogSlider.value;
+            const defaultCatalogItems = defaults.catalogItemCount || catalogItemsSlider.min || 4;
+            catalogItemsSlider.value = defaultCatalogItems;
+            catalogItemsValue.textContent = catalogItemsSlider.value;
             refreshSelect.value = String(defaults.refreshIntervalSeconds || refreshSelect.value);
             ensureOption(refreshSelect, refreshSelect.value, formatSeconds(Number(refreshSelect.value)));
             cacheSelect.value = String(defaults.responseCacheSeconds || cacheSelect.value);
@@ -340,6 +349,11 @@ CONFIG_TEMPLATE = dedent(
 
             catalogSlider.addEventListener('input', () => {
                 catalogValue.textContent = catalogSlider.value;
+                markProfileDirty();
+                updateManifestPreview();
+            });
+            catalogItemsSlider.addEventListener('input', () => {
+                catalogItemsValue.textContent = catalogItemsSlider.value;
                 markProfileDirty();
                 updateManifestPreview();
             });
@@ -652,6 +666,7 @@ CONFIG_TEMPLATE = dedent(
                     openrouterKey: openrouterKey.value.trim(),
                     openrouterModel: openrouterModel.value.trim(),
                     catalogCount: catalogSlider.value,
+                    catalogItems: catalogItemsSlider.value,
                     refreshInterval: refreshSelect.value,
                     cacheTtl: cacheSelect.value,
                     traktAccessToken: traktAuth.accessToken,
@@ -668,6 +683,7 @@ CONFIG_TEMPLATE = dedent(
                 if (settings.openrouterKey) payload.openrouterKey = settings.openrouterKey;
                 if (settings.openrouterModel) payload.openrouterModel = settings.openrouterModel;
                 if (settings.catalogCount) payload.catalogCount = Number(settings.catalogCount);
+                if (settings.catalogItems) payload.catalogItems = Number(settings.catalogItems);
                 if (settings.refreshInterval) payload.refreshInterval = Number(settings.refreshInterval);
                 if (settings.cacheTtl) payload.cacheTtl = Number(settings.cacheTtl);
                 if (settings.traktAccessToken) payload.traktAccessToken = settings.traktAccessToken;
@@ -784,6 +800,7 @@ CONFIG_TEMPLATE = dedent(
                 }
                 if (settings.openrouterModel) params.set('openrouterModel', settings.openrouterModel);
                 if (settings.catalogCount) params.set('catalogCount', settings.catalogCount);
+                if (settings.catalogItems) params.set('catalogItems', settings.catalogItems);
                 if (settings.refreshInterval) params.set('refreshInterval', settings.refreshInterval);
                 if (settings.cacheTtl) params.set('cacheTtl', settings.cacheTtl);
                 if (settings.traktAccessToken) {
@@ -981,6 +998,7 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
         "appName": settings.app_name,
         "openrouterModel": settings.openrouter_model,
         "catalogCount": settings.catalog_count,
+        "catalogItemCount": settings.catalog_item_count,
         "refreshIntervalSeconds": settings.refresh_interval_seconds,
         "responseCacheSeconds": settings.response_cache_seconds,
         "traktAccessToken": settings.trakt_access_token or "",

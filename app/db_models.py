@@ -22,6 +22,7 @@ class Profile(Base):
     trakt_client_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     trakt_access_token: Mapped[str | None] = mapped_column(String(200), nullable=True)
     catalog_count: Mapped[int] = mapped_column(Integer, default=6)
+    catalog_item_count: Mapped[int] = mapped_column(Integer, default=8)
     refresh_interval_seconds: Mapped[int] = mapped_column(Integer, default=43_200)
     response_cache_seconds: Mapped[int] = mapped_column(Integer, default=1_800)
     next_refresh_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

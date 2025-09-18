@@ -47,6 +47,14 @@ class ManifestConfig(BaseModel):
         le=12,
         validation_alias=AliasChoices("catalogCount", "count"),
     )
+    catalog_item_count: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+        validation_alias=AliasChoices(
+            "catalogItems", "catalogItemCount", "itemsPerCatalog"
+        ),
+    )
     refresh_interval: int | None = Field(
         default=None,
         ge=3_600,
@@ -79,7 +87,13 @@ class ManifestConfig(BaseModel):
             payload["profile"] = profile_id
         return cls.model_validate(payload)
 
-    @field_validator("catalog_count", "refresh_interval", "response_cache", mode="before")
+    @field_validator(
+        "catalog_count",
+        "catalog_item_count",
+        "refresh_interval",
+        "response_cache",
+        mode="before",
+    )
     @classmethod
     def _parse_optional_int(cls, value: object) -> object:
         if value is None or value == "":
@@ -119,6 +133,7 @@ class ProfileState:
     trakt_client_id: str | None
     trakt_access_token: str | None
     catalog_count: int
+    catalog_item_count: int
     refresh_interval_seconds: int
     response_cache_seconds: int
     next_refresh_at: datetime | None
@@ -147,6 +162,7 @@ class ProfileStatus:
             "profileId": self.state.id,
             "openrouterModel": self.state.openrouter_model,
             "catalogCount": self.state.catalog_count,
+            "catalogItemCount": self.state.catalog_item_count,
             "refreshIntervalSeconds": self.state.refresh_interval_seconds,
             "responseCacheSeconds": self.state.response_cache_seconds,
             "lastRefreshedAt": (
@@ -372,6 +388,7 @@ class CatalogService:
             movie_history,
             show_history,
             catalog_count=state.catalog_count,
+            catalog_item_count=state.catalog_item_count,
         )
         seed = secrets.token_hex(4)
         catalogs: dict[str, dict[str, Catalog]] | None = None
@@ -401,7 +418,10 @@ class CatalogService:
 
         if catalogs is None:
             catalogs = self._build_fallback_catalogs(
-                movie_history, show_history, seed=seed
+                movie_history,
+                show_history,
+                seed=seed,
+                item_limit=state.catalog_item_count,
             )
             await self._enrich_catalogs_with_cinemeta(catalogs)
 
@@ -480,6 +500,9 @@ class CatalogService:
             trakt_client_id=profile.trakt_client_id,
             trakt_access_token=profile.trakt_access_token,
             catalog_count=profile.catalog_count,
+            catalog_item_count=getattr(
+                profile, "catalog_item_count", self._settings.catalog_item_count
+            ),
             refresh_interval_seconds=profile.refresh_interval_seconds,
             response_cache_seconds=profile.response_cache_seconds,
             next_refresh_at=profile.next_refresh_at,
@@ -606,6 +629,10 @@ class CatalogService:
                     openrouter_api_key=openrouter_key,
                     openrouter_model=config.openrouter_model or self._settings.openrouter_model,
                     catalog_count=config.catalog_count or self._settings.catalog_count,
+                    catalog_item_count=(
+                        config.catalog_item_count
+                        or self._settings.catalog_item_count
+                    ),
                     refresh_interval_seconds=config.refresh_interval or self._settings.refresh_interval_seconds,
                     response_cache_seconds=config.response_cache or self._settings.response_cache_seconds,
                     trakt_client_id=config.trakt_client_id or self._settings.trakt_client_id,
@@ -627,6 +654,14 @@ class CatalogService:
                     refresh_required = True
                 if config.catalog_count and config.catalog_count != profile.catalog_count:
                     profile.catalog_count = config.catalog_count
+                    refresh_required = True
+                if (
+                    config.catalog_item_count
+                    and config.catalog_item_count != getattr(
+                        profile, "catalog_item_count", None
+                    )
+                ):
+                    profile.catalog_item_count = config.catalog_item_count
                     refresh_required = True
                 if config.refresh_interval and config.refresh_interval != profile.refresh_interval_seconds:
                     profile.refresh_interval_seconds = config.refresh_interval
@@ -713,6 +748,7 @@ class CatalogService:
                     trakt_client_id=self._settings.trakt_client_id,
                     trakt_access_token=self._settings.trakt_access_token,
                     catalog_count=self._settings.catalog_count,
+                    catalog_item_count=self._settings.catalog_item_count,
                     refresh_interval_seconds=self._settings.refresh_interval_seconds,
                     response_cache_seconds=self._settings.response_cache_seconds,
                     next_refresh_at=now,
@@ -731,6 +767,9 @@ class CatalogService:
                     updated = True
                 if profile.catalog_count != self._settings.catalog_count:
                     profile.catalog_count = self._settings.catalog_count
+                    updated = True
+                if getattr(profile, "catalog_item_count", None) != self._settings.catalog_item_count:
+                    profile.catalog_item_count = self._settings.catalog_item_count
                     updated = True
                 if profile.refresh_interval_seconds != self._settings.refresh_interval_seconds:
                     profile.refresh_interval_seconds = self._settings.refresh_interval_seconds
@@ -763,10 +802,12 @@ class CatalogService:
         show_history: list[dict[str, Any]],
         *,
         catalog_count: int,
+        catalog_item_count: int,
     ) -> dict[str, Any]:
         return {
             "generated_at": datetime.utcnow().isoformat(),
             "catalog_count": catalog_count,
+            "catalog_item_count": catalog_item_count,
             "profile": {
                 "movies": TraktClient.summarize_history(movie_history, key="movie"),
                 "series": TraktClient.summarize_history(show_history, key="show"),
@@ -779,6 +820,7 @@ class CatalogService:
         show_history: list[dict[str, Any]],
         *,
         seed: str,
+        item_limit: int,
     ) -> dict[str, dict[str, Catalog]]:
         catalogs: dict[str, dict[str, Catalog]] = {"movie": {}, "series": {}}
 
@@ -788,6 +830,7 @@ class CatalogService:
                 content_type="movie",
                 title="AI Offline: Movies You Loved",
                 seed=seed,
+                item_limit=item_limit,
             )
             catalogs["movie"][catalog.id] = catalog
 
@@ -797,6 +840,7 @@ class CatalogService:
                 content_type="series",
                 title="AI Offline: Series Marathon",
                 seed=seed,
+                item_limit=item_limit,
             )
             catalogs["series"][catalog.id] = catalog
 
@@ -821,10 +865,11 @@ class CatalogService:
         content_type: str,
         title: str,
         seed: str,
+        item_limit: int,
     ) -> Catalog:
         key = "movie" if content_type == "movie" else "show"
         items: list[CatalogItem] = []
-        for index, entry in enumerate(history[:10]):
+        for index, entry in enumerate(history[:item_limit]):
             media = entry.get(key) or {}
             if not isinstance(media, dict):
                 continue
