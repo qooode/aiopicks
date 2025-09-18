@@ -53,45 +53,6 @@ class CatalogItem(BaseModel):
             "type": self.type,
         }
 
-    def to_meta(self, catalog_id: str, index: int) -> dict[str, object]:
-        """Return a Stremio meta dictionary."""
-
-        meta_id = self.build_meta_id(catalog_id, index)
-
-        meta: dict[str, object] = {
-            "id": meta_id,
-            "type": self.type,
-            "name": self.title,
-        }
-
-        if self.poster:
-            meta["poster"] = str(self.poster)
-        if self.background:
-            meta["background"] = str(self.background)
-        if self.overview:
-            meta["description"] = self.overview
-        if self.year:
-            meta["releaseInfo"] = str(self.year)
-        if self.weight is not None:
-            meta["aiConfidence"] = round(self.weight, 3)
-        if self.genres:
-            meta["genres"] = self.genres
-        if self.runtime_minutes:
-            meta["runtime"] = self.runtime_minutes
-        if self.maturity_rating:
-            meta["contentRating"] = self.maturity_rating
-        if self.providers:
-            meta["links"] = [
-                {"name": provider, "category": "where-to-watch"}
-                for provider in self.providers
-            ]
-
-        meta["behaviorHints"] = {
-            "bingeGroup": catalog_id,
-            "defaultVideoId": meta_id,
-        }
-        return meta
-
 
 class Catalog(BaseModel):
     """Collection of items grouped by the AI."""

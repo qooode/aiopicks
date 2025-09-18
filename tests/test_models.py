@@ -22,7 +22,9 @@ def test_catalog_from_ai_payload_generates_ids():
     )
 
     assert catalog.id.startswith("aiopicks-movie")
-    assert catalog.items[0].to_meta(catalog.id, 0)["id"] == "tt0359950"
+    stub = catalog.items[0].to_catalog_stub(catalog.id, 0)
+    assert stub["id"] == "tt0359950"
+    assert stub["type"] == "movie"
 
 
 def test_catalog_bundle_from_ai_response_handles_missing_sections():
@@ -51,5 +53,6 @@ def test_catalog_bundle_from_ai_response_handles_missing_sections():
 
 def test_catalog_item_uses_tmdb_id_when_other_ids_missing() -> None:
     item = CatalogItem(title="Example", type="movie", tmdb_id=12345)
-    meta = item.to_meta("aiopicks-movie-demo", 0)
-    assert meta["id"] == "tmdb:12345"
+    stub = item.to_catalog_stub("aiopicks-movie-demo", 0)
+    assert stub["id"] == "tmdb:12345"
+    assert stub["type"] == "movie"

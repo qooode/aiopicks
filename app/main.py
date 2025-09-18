@@ -166,30 +166,6 @@ def register_routes(fastapi_app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse(payload)
 
-    async def _meta_endpoint(
-        request: Request,
-        content_type: str,
-        meta_id: str,
-        *,
-        profile_id: str | None = None,
-    ) -> JSONResponse:
-        if content_type not in {"movie", "series"}:
-            raise HTTPException(status_code=400, detail="Unsupported content type")
-        service = get_catalog_service(fastapi_app)
-        try:
-            config = ManifestConfig.from_request(
-                request.query_params, profile_id=profile_id
-            )
-        except ValidationError as exc:
-            raise HTTPException(status_code=400, detail=exc.errors()) from exc
-        try:
-            meta_payload = await service.find_meta(config, content_type, meta_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return JSONResponse({"meta": meta_payload})
-
     @fastapi_app.get("/healthz")
     async def healthcheck() -> dict[str, str]:
         return {"status": "ok"}
@@ -225,18 +201,6 @@ def register_routes(fastapi_app: FastAPI) -> None:
     ) -> JSONResponse:
         return await _catalog_endpoint(
             request, content_type, catalog_id, profile_id=profile_id
-        )
-
-    @fastapi_app.get("/meta/{content_type}/{meta_id}.json")
-    async def meta(request: Request, content_type: str, meta_id: str) -> JSONResponse:
-        return await _meta_endpoint(request, content_type, meta_id)
-
-    @fastapi_app.get("/profiles/{profile_id}/meta/{content_type}/{meta_id}.json")
-    async def meta_with_profile(
-        request: Request, profile_id: str, content_type: str, meta_id: str
-    ) -> JSONResponse:
-        return await _meta_endpoint(
-            request, content_type, meta_id, profile_id=profile_id
         )
 
     @fastapi_app.post("/api/profile/prepare")

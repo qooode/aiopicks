@@ -176,10 +176,6 @@ def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:
             }
         ]
 
-        meta = await service.find_meta(config, "movie", "tt1234567")
-        assert meta["id"] == "tt1234567"
-        assert meta["name"] == "Sample Movie"
-
         async with database.session_factory() as session:
             stored = await session.get(CatalogRecord, record_id)
             assert stored is not None
