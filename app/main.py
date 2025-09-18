@@ -21,6 +21,7 @@ from .services.catalog_generator import CatalogService
 from .services.catalog_generator import ManifestConfig
 from .services.openrouter import OpenRouterClient
 from .services.trakt import TraktClient
+from .services.tmdb import TMDBClient
 from .web import render_config_page
 
 logging.basicConfig(level=logging.INFO)
@@ -44,6 +45,16 @@ async def lifespan(_: FastAPI):
             timeout=httpx.Timeout(60.0, connect=10.0),
         )
     )
+    tmdb_async_client: httpx.AsyncClient | None = None
+    tmdb_client: TMDBClient | None = None
+    if settings.tmdb_api_key:
+        tmdb_async_client = await exit_stack.enter_async_context(
+            httpx.AsyncClient(
+                base_url=str(settings.tmdb_api_url),
+                timeout=httpx.Timeout(20.0, connect=10.0),
+            )
+        )
+        tmdb_client = TMDBClient(settings, tmdb_async_client)
 
     database = Database(settings.database_url)
     await database.create_all()
@@ -51,7 +62,7 @@ async def lifespan(_: FastAPI):
     trakt = TraktClient(settings, trakt_client)
     openrouter = OpenRouterClient(settings, openrouter_client)
     catalog_service = CatalogService(
-        settings, trakt, openrouter, database.session_factory
+        settings, trakt, openrouter, database.session_factory, tmdb_client=tmdb_client
     )
 
     app.state.catalog_service = catalog_service
@@ -122,7 +133,7 @@ def register_routes(fastapi_app: FastAPI) -> None:
             "catalogs": catalogs,
             "resources": ["catalog"],
             "types": ["movie", "series"],
-            "idPrefixes": ["aiopicks", "tt", "trakt"],
+            "idPrefixes": ["aiopicks", "tt", "trakt", "tmdb"],
         }
 
     async def _catalog_endpoint(

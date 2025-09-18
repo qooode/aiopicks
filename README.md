@@ -44,6 +44,7 @@ AIOPicks invents themed rows with bespoke names and contents:
 - Python 3.10+
 - A Trakt account with viewing history (OAuth device authentication recommended)
 - OpenRouter API key with access to `google/gemini-2.5-flash-lite`
+- TMDB API key for resolving IDs/posters (create one at https://www.themoviedb.org/settings/api)
 - (Optional) Docker if you prefer container deployment
 
 ## ⚙️ Configuration
@@ -56,6 +57,7 @@ OPENROUTER_MODEL=google/gemini-2.5-flash-lite
 TRAKT_CLIENT_ID=your-trakt-client-id
 TRAKT_CLIENT_SECRET=your-trakt-client-secret
 TRAKT_ACCESS_TOKEN=your-trakt-access-token
+TMDB_API_KEY=your-tmdb-api-key
 # Optional: override the detected redirect URL if you proxy through a custom domain
 TRAKT_REDIRECT_URI=https://your-domain.example/api/trakt/callback
 CATALOG_COUNT=6
