@@ -19,32 +19,19 @@ CONFIG_TEMPLATE = dedent(
     <title>__APP_NAME__ · Configuration</title>
     <style>
         :root {
-            color-scheme: light dark;
+            color-scheme: dark;
             font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-            --surface: #ffffff;
-            --surface-muted: #f4f4f5;
-            --surface-strong: #e4e4e7;
-            --text-primary: #1f2933;
-            --text-muted: #6b7280;
-            --outline: #d4d4d8;
-            --outline-strong: #b4b4be;
-            --accent: #2f2f37;
-            --accent-contrast: #f9fafb;
-            background: var(--surface-muted);
+            --surface: #141414;
+            --surface-muted: #090909;
+            --surface-strong: #1f1f1f;
+            --text-primary: #f5f5f5;
+            --text-muted: #a6a6a6;
+            --outline: #1c1c1c;
+            --outline-strong: #2b2b2b;
+            --accent: #f0f0f0;
+            --accent-contrast: #050505;
+            background: #000000;
             color: var(--text-primary);
-        }
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --surface: rgba(24, 24, 27, 0.82);
-                --surface-muted: rgba(39, 39, 42, 0.8);
-                --surface-strong: rgba(63, 63, 70, 0.65);
-                --text-primary: #e5e7eb;
-                --text-muted: #a1a1aa;
-                --outline: rgba(82, 82, 91, 0.65);
-                --outline-strong: rgba(113, 113, 122, 0.75);
-                --accent: #f4f4f5;
-                --accent-contrast: #111827;
-            }
         }
         * {
             box-sizing: border-box;
@@ -52,7 +39,7 @@ CONFIG_TEMPLATE = dedent(
         body {
             margin: 0;
             min-height: 100vh;
-            background: var(--surface-muted);
+            background: #000000;
         }
         a {
             color: inherit;
@@ -87,7 +74,7 @@ CONFIG_TEMPLATE = dedent(
             border: 1px solid var(--outline);
             border-radius: 20px;
             padding: 1.75rem;
-            box-shadow: 0 24px 40px -28px rgba(17, 24, 39, 0.35);
+            box-shadow: 0 24px 40px -28px rgba(0, 0, 0, 0.65);
             backdrop-filter: blur(10px);
         }
         .card h2 {
@@ -132,7 +119,7 @@ CONFIG_TEMPLATE = dedent(
         select:focus {
             outline: none;
             border-color: var(--outline-strong);
-            box-shadow: 0 0 0 3px rgba(148, 148, 160, 0.25);
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
             background: var(--surface);
         }
         input[type="range"] {
@@ -153,7 +140,7 @@ CONFIG_TEMPLATE = dedent(
             border: none;
             border-radius: 999px;
             padding: 0.65rem 1.35rem;
-            background: linear-gradient(120deg, var(--accent), #3f3f46);
+            background: var(--accent);
             color: var(--accent-contrast);
             font-weight: 600;
             font-size: 0.95rem;
@@ -167,7 +154,7 @@ CONFIG_TEMPLATE = dedent(
         }
         button:hover:not(:disabled) {
             transform: translateY(-1px);
-            box-shadow: 0 12px 24px -18px rgba(17, 24, 39, 0.35);
+            box-shadow: 0 12px 24px -18px rgba(0, 0, 0, 0.65);
         }
         button:disabled {
             cursor: not-allowed;
@@ -250,7 +237,7 @@ CONFIG_TEMPLATE = dedent(
             <header>
             <p class="pill">Stremio Add-on</p>
             <h1>Configure __APP_NAME__</h1>
-            <p>Connect your Trakt account, fine-tune the manifest name, and copy an install-ready link for Stremio.</p>
+            <p>Connect your Trakt account, dial in the catalog cadence, and copy an install-ready link for Stremio.</p>
         </header>
         <div class="grid">
             <section class="card" id="trakt-card">
@@ -265,12 +252,8 @@ CONFIG_TEMPLATE = dedent(
             </section>
             <section class="card" id="manifest-card">
                 <h2>Manifest builder</h2>
-                <p class="description">Choose how many AI generated catalogs to expose, set the display name, and copy a ready-to-install manifest URL. Empty fields fall back to the server defaults.</p>
+                <p class="description">Choose how many AI generated catalogs to expose and copy a ready-to-install manifest URL. Empty fields fall back to the server defaults.</p>
                 <p class="notice hidden" id="manifest-lock">Sign in with Trakt to unlock personalised manifest links.</p>
-                <div class="field">
-                    <label for="config-manifest-name">Add-on name <span class="helper">Defaults to __APP_NAME__</span></label>
-                    <input id="config-manifest-name" type="text" placeholder="Add-on name as seen in Stremio" maxlength="120" />
-                </div>
                 <div class="field">
                     <label for="config-openrouter-key">OpenRouter API key <span class="helper">Optional – stored client side only</span></label>
                     <input id="config-openrouter-key" type="text" placeholder="sk-or-..." autocomplete="off" spellcheck="false" />
@@ -320,9 +303,6 @@ CONFIG_TEMPLATE = dedent(
         (function () {
             const defaults = JSON.parse('__DEFAULTS_JSON__');
             const baseManifestUrl = new URL('/manifest.json', window.location.origin).toString();
-            const defaultManifestName = (defaults.manifestName || defaults.appName || '').trim();
-
-            const manifestNameInput = document.getElementById('config-manifest-name');
             const openrouterKey = document.getElementById('config-openrouter-key');
             const openrouterModel = document.getElementById('config-openrouter-model');
             const catalogSlider = document.getElementById('config-catalog-count');
@@ -357,7 +337,6 @@ CONFIG_TEMPLATE = dedent(
             let profileStatus = null;
             let statusPollTimer = null;
 
-            manifestNameInput.value = defaultManifestName;
             openrouterModel.value = defaults.openrouterModel || '';
             catalogSlider.value = defaults.catalogCount || catalogSlider.min || 1;
             catalogValue.textContent = catalogSlider.value;
@@ -385,11 +364,6 @@ CONFIG_TEMPLATE = dedent(
                 if (status && status.refreshing) {
                     scheduleStatusPoll();
                 }
-            });
-
-            manifestNameInput.addEventListener('input', () => {
-                markProfileDirty();
-                updateManifestPreview();
             });
 
             catalogSlider.addEventListener('input', () => {
@@ -707,12 +681,7 @@ CONFIG_TEMPLATE = dedent(
             }
 
             function collectManifestSettings() {
-                const trimmedManifestName = manifestNameInput.value.trim();
                 return {
-                    manifestName:
-                        trimmedManifestName && trimmedManifestName !== defaultManifestName
-                            ? trimmedManifestName
-                            : '',
                     openrouterKey: openrouterKey.value.trim(),
                     openrouterModel: openrouterModel.value.trim(),
                     catalogCount: catalogSlider.value,
@@ -730,7 +699,6 @@ CONFIG_TEMPLATE = dedent(
                 if (includeProfileId && profileStatus && profileStatus.profileId) {
                     payload.profileId = profileStatus.profileId;
                 }
-                if (settings.manifestName) payload.manifestName = settings.manifestName;
                 if (settings.openrouterKey) payload.openrouterKey = settings.openrouterKey;
                 if (settings.openrouterModel) payload.openrouterModel = settings.openrouterModel;
                 if (settings.catalogCount) payload.catalogCount = Number(settings.catalogCount);
@@ -849,7 +817,6 @@ CONFIG_TEMPLATE = dedent(
                 } else if (settings.openrouterKey) {
                     params.set('openrouterKey', settings.openrouterKey);
                 }
-                if (settings.manifestName) params.set('manifestName', settings.manifestName);
                 if (settings.openrouterModel) params.set('openrouterModel', settings.openrouterModel);
                 if (settings.catalogCount) params.set('catalogCount', settings.catalogCount);
                 if (settings.catalogItems) params.set('catalogItems', settings.catalogItems);
