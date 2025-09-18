@@ -26,7 +26,9 @@ def test_catalog_from_ai_payload_generates_ids():
     assert stub == {
         "id": "tt0359950",
         "type": "movie",
+        "name": "The Secret Life of Walter Mitty",
         "imdbId": "tt0359950",
+        "imdb_id": "tt0359950",
     }
 
 
@@ -60,3 +62,5 @@ def test_catalog_item_uses_tmdb_id_when_other_ids_missing() -> None:
     assert stub["id"] == "tmdb:12345"
     assert stub["type"] == "movie"
     assert stub["tmdbId"] == 12345
+    assert stub["tmdb_id"] == 12345
+    assert stub["name"] == "Example"
