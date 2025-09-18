@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from .config import settings
 from .database import Database
+from .services.cinemeta import CinemetaClient
 from .services.catalog_generator import CatalogService
 from .services.catalog_generator import ManifestConfig
 from .services.openrouter import OpenRouterClient
@@ -44,13 +45,20 @@ async def lifespan(_: FastAPI):
             timeout=httpx.Timeout(60.0, connect=10.0),
         )
     )
+    cinemeta_http_client = await exit_stack.enter_async_context(
+        httpx.AsyncClient(
+            base_url=str(settings.cinemeta_api_url),
+            timeout=httpx.Timeout(15.0, connect=5.0),
+        )
+    )
     database = Database(settings.database_url)
     await database.create_all()
 
     trakt = TraktClient(settings, trakt_client)
     openrouter = OpenRouterClient(settings, openrouter_client)
+    cinemeta = CinemetaClient(settings, cinemeta_http_client)
     catalog_service = CatalogService(
-        settings, trakt, openrouter, database.session_factory
+        settings, trakt, openrouter, cinemeta, database.session_factory
     )
 
     app.state.catalog_service = catalog_service

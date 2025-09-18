@@ -19,6 +19,7 @@ from ..config import Settings
 from ..db_models import CatalogRecord, Profile
 from ..models import Catalog, CatalogBundle, CatalogItem
 from ..utils import slugify
+from .cinemeta import CinemetaClient, CinemetaMatch
 from .openrouter import OpenRouterClient
 from .trakt import TraktClient
 
@@ -171,11 +172,13 @@ class CatalogService:
         settings: Settings,
         trakt_client: TraktClient,
         openrouter_client: OpenRouterClient,
+        cinemeta_client: CinemetaClient,
         session_factory: async_sessionmaker[AsyncSession],
     ):
         self._settings = settings
         self._trakt = trakt_client
         self._ai = openrouter_client
+        self._cinemeta = cinemeta_client
         self._session_factory = session_factory
         self._locks: dict[str, asyncio.Lock] = {}
         self._refresh_task: asyncio.Task[None] | None = None
@@ -381,6 +384,7 @@ class CatalogService:
                 model=state.openrouter_model,
             )
             catalogs = self._bundle_to_dict(bundle)
+            await self._enrich_catalogs_with_cinemeta(catalogs)
             if not (catalogs["movie"] or catalogs["series"]):
                 logger.warning(
                     "AI returned an empty catalog bundle for profile %s; falling back to history",
@@ -399,6 +403,7 @@ class CatalogService:
             catalogs = self._build_fallback_catalogs(
                 movie_history, show_history, seed=seed
             )
+            await self._enrich_catalogs_with_cinemeta(catalogs)
 
         await self._store_catalogs(state, catalogs)
 
@@ -500,6 +505,89 @@ class CatalogService:
                 updated = True
             if updated:
                 await session.commit()
+
+    async def _enrich_catalogs_with_cinemeta(
+        self, catalogs: dict[str, dict[str, Catalog]]
+    ) -> None:
+        """Populate missing identifiers and artwork by querying Cinemeta."""
+
+        lookup_tasks: dict[
+            tuple[str, str, int | None], asyncio.Task[CinemetaMatch | None]
+        ] = {}
+        for catalog_map in catalogs.values():
+            for catalog in catalog_map.values():
+                for item in catalog.items:
+                    if item.imdb_id and item.poster:
+                        continue
+                    title = (item.title or "").strip()
+                    if not title:
+                        continue
+                    key = (item.type, title.casefold(), item.year)
+                    if key in lookup_tasks:
+                        continue
+
+                    async def _lookup(
+                        *,
+                        title: str = title,
+                        content_type: str = item.type,
+                        year: int | None = item.year,
+                    ) -> CinemetaMatch | None:
+                        return await self._cinemeta.lookup(
+                            title, content_type=content_type, year=year
+                        )
+
+                    lookup_tasks[key] = asyncio.create_task(_lookup())
+
+        if not lookup_tasks:
+            return
+
+        results = await asyncio.gather(
+            *lookup_tasks.values(), return_exceptions=True
+        )
+        matches: dict[tuple[str, str, int | None], CinemetaMatch] = {}
+        for key, result in zip(lookup_tasks.keys(), results):
+            if isinstance(result, Exception):
+                logger.warning("Cinemeta lookup failed for %s: %s", key, result)
+                continue
+            if result is None:
+                continue
+            matches[key] = result
+
+        if not matches:
+            return
+
+        for catalog_map in catalogs.values():
+            for catalog_id, catalog in list(catalog_map.items()):
+                updated_items: list[CatalogItem] = []
+                for item in catalog.items:
+                    title = (item.title or "").strip()
+                    if not title:
+                        updated_items.append(item)
+                        continue
+                    key = (item.type, title.casefold(), item.year)
+                    match = matches.get(key)
+                    if match is None:
+                        updated_items.append(item)
+                        continue
+
+                    updates: dict[str, Any] = {}
+                    if match.id and item.imdb_id != match.id:
+                        updates["imdb_id"] = match.id
+                    if match.year and item.year != match.year:
+                        updates["year"] = match.year
+                    if match.poster and str(item.poster or "") != match.poster:
+                        updates["poster"] = match.poster
+                    if match.background and str(item.background or "") != match.background:
+                        updates["background"] = match.background
+
+                    if updates:
+                        updated_items.append(item.model_copy(update=updates))
+                    else:
+                        updated_items.append(item)
+
+                catalog_map[catalog_id] = catalog.model_copy(
+                    update={"items": updated_items}
+                )
 
     async def _resolve_profile(self, config: ManifestConfig) -> ProfileContext:
         profile_id = self._determine_profile_id(config)

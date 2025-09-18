@@ -33,10 +33,10 @@ Trakt profile summary (generated at {generated_at} UTC):
 Instructions:
 1. Generate {catalog_count} movie catalogs AND {catalog_count} series catalogs.
 2. Use the random seed `{seed}` to introduce surprise (shuffle titles, invent novel themes).
-3. Each catalog must include 6-10 strong picks with real-world metadata.
+3. Each catalog must include 6-10 strong picks with real titles and release years.
 4. Avoid repeating catalog titles across refreshes by choosing unexpected phrasing.
 5. Balance comfort picks (known favorites) with 30% exploratory discoveries.
-6. Provide diverse posters/backgrounds when possible and include imdb or trakt IDs when you know them.
+6. For each item include only its real title, type, release year, and a concise description. Do not invent IDs, posters, or runtimes—the server enriches entries with Cinemeta.
 
 Respond with JSON using this structure:
 {{
@@ -50,18 +50,8 @@ Respond with JSON using this structure:
         {{
           "name": "Movie title",
           "type": "movie",
-          "description": "short synopsis",
-          "poster": "https://...",
-          "background": "https://...",
           "year": 2024,
-          "imdb_id": "tt...",
-          "trakt_id": 12345,
-          "tmdb_id": 67890,
-          "runtime_minutes": 120,
-          "genres": ["genre"],
-          "maturity_rating": "PG-13",
-          "weight": 0.0,
-          "providers": ["Netflix", "Hulu"]
+          "description": "short synopsis"
         }}
       ]
     }}

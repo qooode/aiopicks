@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     openrouter_api_url: HttpUrl = Field(
         default="https://openrouter.ai/api/v1", alias="OPENROUTER_API_URL"
     )
+    cinemeta_api_url: HttpUrl = Field(
+        default="https://v3-cinemeta.strem.io", alias="CINEMETA_API_URL"
+    )
 
     database_url: str = Field(
         default="sqlite+aiosqlite:///./aiopicks.db", alias="DATABASE_URL"

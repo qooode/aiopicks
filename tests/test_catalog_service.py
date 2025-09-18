@@ -8,6 +8,7 @@ from app.config import Settings
 from app.database import Database
 from app.db_models import CatalogRecord, Profile
 from app.models import Catalog, CatalogItem
+from app.services.cinemeta import CinemetaClient
 from app.services.catalog_generator import CatalogService
 from app.services.catalog_generator import ProfileState, ProfileStatus
 from app.services.openrouter import OpenRouterClient
@@ -30,6 +31,7 @@ def test_default_profile_skipped_without_api_key(tmp_path) -> None:
             settings,
             cast(TraktClient, object()),
             cast(OpenRouterClient, object()),
+            cast(CinemetaClient, object()),
             database.session_factory,
         )
 
@@ -89,6 +91,7 @@ def test_profile_id_inferred_from_catalog_id() -> None:
         settings,
         cast(TraktClient, object()),
         cast(OpenRouterClient, object()),
+        cast(CinemetaClient, object()),
         cast(Database, object()),  # session factory not needed for this test
     )
 
@@ -110,6 +113,7 @@ def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:
             settings,
             cast(TraktClient, object()),
             cast(OpenRouterClient, object()),
+            cast(CinemetaClient, object()),
             database.session_factory,
         )
 
@@ -174,6 +178,7 @@ def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:
                 "id": "tt1234567",
                 "type": "movie",
                 "name": "Sample Movie",
+                "description": "A test entry",
                 "imdbId": "tt1234567",
                 "imdb_id": "tt1234567",
             }
