@@ -33,11 +33,6 @@ class Settings(BaseSettings):
         default="google/gemini-2.5-flash-lite", alias="OPENROUTER_MODEL"
     )
 
-    tmdb_api_key: str | None = Field(default=None, alias="TMDB_API_KEY")
-    tmdb_api_url: HttpUrl = Field(
-        default="https://api.themoviedb.org/3", alias="TMDB_API_URL"
-    )
-
     catalog_count: int = Field(default=6, alias="CATALOG_COUNT", ge=1, le=12)
     refresh_interval_seconds: int = Field(
         default=43_200, alias="REFRESH_INTERVAL", ge=3_600
