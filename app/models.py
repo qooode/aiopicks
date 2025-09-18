@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl
 
 from .utils import ensure_unique_meta_id, slugify
 
@@ -15,7 +15,12 @@ ContentType = Literal["movie", "series"]
 class CatalogItem(BaseModel):
     """Represents a single media entry returned to Stremio."""
 
-    title: str = Field(alias="name")
+    model_config = ConfigDict(populate_by_name=True)
+
+    title: str = Field(
+        validation_alias=AliasChoices("title", "name"),
+        serialization_alias="name",
+    )
     type: ContentType
     overview: str | None = Field(default=None, alias="description")
     poster: HttpUrl | None = None
