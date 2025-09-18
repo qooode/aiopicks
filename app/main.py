@@ -135,6 +135,10 @@ def register_routes(fastapi_app: FastAPI) -> None:
         if content_type not in {"movie", "series"}:
             raise HTTPException(status_code=400, detail="Unsupported content type")
         service = get_catalog_service(fastapi_app)
+        if profile_id is None:
+            inferred = service.profile_id_from_catalog_id(catalog_id)
+            if inferred:
+                profile_id = inferred
         try:
             config = ManifestConfig.from_request(
                 request.query_params, profile_id=profile_id
