@@ -399,6 +399,17 @@ def _origin_from_url(url_value: str | None) -> str | None:
 
 def _render_oauth_popup(target_origin: str, payload: dict[str, Any]) -> str:
     message = {"source": "trakt-oauth", **payload}
+    status = str(payload.get("status") or "").lower()
+    tokens = message.get("tokens")
+    if status == "success" and isinstance(tokens, dict):
+        message.setdefault("type", "TRAKT_AUTH_SUCCESS")
+        for key in ("access_token", "refresh_token", "expires_in", "scope", "token_type"):
+            value = tokens.get(key)
+            if value not in {None, ""}:
+                message.setdefault(key, value)
+    elif status:
+        message.setdefault("type", "TRAKT_AUTH_ERROR")
+
     json_payload = json.dumps(message).replace("</", "<\\/")
     origin = target_origin or "*"
     return f"""
@@ -422,6 +433,14 @@ def _render_oauth_popup(target_origin: str, payload: dict[str, Any]) -> str:
                 }}
             }} catch (err) {{
                 console.error('Unable to notify opener via postMessage', err);
+            }}
+            if (!notified && window.opener && !window.opener.closed && targetOrigin !== '*') {{
+                try {{
+                    window.opener.postMessage(payload, '*');
+                    notified = true;
+                }} catch (err) {{
+                    console.error('Unable to notify opener via wildcard postMessage', err);
+                }}
             }}
             try {{
                 if ('BroadcastChannel' in window) {{

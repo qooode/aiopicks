@@ -401,9 +401,66 @@ CONFIG_TEMPLATE = dedent(
 
             let traktBroadcastChannel = null;
 
+            function normalizeTraktOauthPayload(rawPayload) {
+                if (rawPayload == null) {
+                    return null;
+                }
+                let data = rawPayload;
+                if (typeof data === 'string') {
+                    try {
+                        data = JSON.parse(data);
+                    } catch (err) {
+                        console.warn('Ignoring malformed Trakt OAuth payload', err);
+                        return null;
+                    }
+                }
+                if (!data || typeof data !== 'object') {
+                    return null;
+                }
+                if (data.source === 'trakt-oauth') {
+                    if (!data.tokens && (data.access_token || data.refresh_token)) {
+                        data.tokens = {
+                            access_token: data.access_token || data.accessToken || '',
+                            refresh_token: data.refresh_token || data.refreshToken || '',
+                        };
+                    }
+                    return data;
+                }
+                const type = typeof data.type === 'string' ? data.type.toUpperCase() : '';
+                if (type === 'TRAKT_AUTH_SUCCESS') {
+                    const tokens = {
+                        access_token: data.access_token || data.accessToken || '',
+                        refresh_token: data.refresh_token || data.refreshToken || '',
+                    };
+                    if (data.expires_in != null) {
+                        tokens.expires_in = data.expires_in;
+                    }
+                    if (data.scope) {
+                        tokens.scope = data.scope;
+                    }
+                    if (data.token_type) {
+                        tokens.token_type = data.token_type;
+                    }
+                    return {
+                        source: 'trakt-oauth',
+                        status: 'success',
+                        tokens,
+                    };
+                }
+                if (type === 'TRAKT_AUTH_ERROR') {
+                    return {
+                        source: 'trakt-oauth',
+                        status: 'error',
+                        error: data.error || data.message || 'trakt_error',
+                        error_description: data.error_description || data.description || '',
+                    };
+                }
+                return null;
+            }
+
             function handleTraktOauthPayload(rawPayload, origin) {
-                const data = rawPayload || {};
-                if (data.source !== 'trakt-oauth') {
+                const data = normalizeTraktOauthPayload(rawPayload);
+                if (!data || data.source !== 'trakt-oauth') {
                     return;
                 }
                 if (origin && !traktOrigins.includes(origin)) {
