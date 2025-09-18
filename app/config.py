@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     )
 
     catalog_count: int = Field(default=6, alias="CATALOG_COUNT", ge=1, le=12)
+    catalog_item_count: int = Field(
+        default=8, alias="CATALOG_ITEM_COUNT", ge=1, le=100
+    )
     refresh_interval_seconds: int = Field(
         default=43_200, alias="REFRESH_INTERVAL", ge=3_600
     )
