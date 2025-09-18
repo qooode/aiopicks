@@ -17,33 +17,39 @@ CONFIG_TEMPLATE = dedent(
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>__APP_NAME__ · Configuration</title>
-    <style>
+        <style>
         :root {
             color-scheme: light dark;
             font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+            --page: #f6f7f8;
             --surface: #ffffff;
-            --surface-muted: #f4f4f5;
-            --surface-strong: #e4e4e7;
-            --text-primary: #1f2933;
+            --surface-alt: #f9fafb;
+            --surface-strong: #eef1f6;
+            --text-primary: #0f172a;
             --text-muted: #6b7280;
-            --outline: #d4d4d8;
-            --outline-strong: #b4b4be;
-            --accent: #2f2f37;
+            --outline: #d3d8e2;
+            --outline-strong: #b5bdc9;
+            --shadow-soft: rgba(15, 23, 42, 0.12);
+            --shadow-strong: rgba(15, 23, 42, 0.2);
+            --accent: #1f2937;
             --accent-contrast: #f9fafb;
-            background: var(--surface-muted);
-            color: var(--text-primary);
+            --focus-ring: rgba(71, 85, 105, 0.2);
         }
         @media (prefers-color-scheme: dark) {
             :root {
-                --surface: rgba(24, 24, 27, 0.82);
-                --surface-muted: rgba(39, 39, 42, 0.8);
-                --surface-strong: rgba(63, 63, 70, 0.65);
-                --text-primary: #e5e7eb;
-                --text-muted: #a1a1aa;
-                --outline: rgba(82, 82, 91, 0.65);
-                --outline-strong: rgba(113, 113, 122, 0.75);
-                --accent: #f4f4f5;
-                --accent-contrast: #111827;
+                --page: #020617;
+                --surface: rgba(15, 23, 42, 0.72);
+                --surface-alt: rgba(30, 41, 59, 0.72);
+                --surface-strong: rgba(51, 65, 85, 0.68);
+                --text-primary: #e2e8f0;
+                --text-muted: #94a3b8;
+                --outline: rgba(148, 163, 184, 0.45);
+                --outline-strong: rgba(148, 163, 184, 0.7);
+                --shadow-soft: rgba(2, 6, 23, 0.45);
+                --shadow-strong: rgba(2, 6, 23, 0.65);
+                --accent: #e2e8f0;
+                --accent-contrast: #020617;
+                --focus-ring: rgba(148, 163, 184, 0.25);
             }
         }
         * {
@@ -52,64 +58,101 @@ CONFIG_TEMPLATE = dedent(
         body {
             margin: 0;
             min-height: 100vh;
-            background: var(--surface-muted);
+            background: var(--page);
+            color: var(--text-primary);
+            line-height: 1.65;
+            -webkit-font-smoothing: antialiased;
+            padding: 0 1.75rem;
         }
         a {
             color: inherit;
             text-decoration: underline;
             text-decoration-color: var(--outline-strong);
+            text-decoration-thickness: 2px;
+        }
+        a:hover {
+            text-decoration-color: var(--accent);
         }
         main {
-            max-width: 960px;
+            width: min(1080px, 100%);
             margin: 0 auto;
-            padding: 3rem 1.5rem 4rem;
+            padding: 4rem 0 4.5rem;
+            display: grid;
+            gap: 2.5rem;
         }
         header {
-            text-align: center;
-            margin-bottom: 2.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            padding: 2.5rem;
+            border-radius: 26px;
+            background: var(--surface);
+            border: 1px solid var(--outline);
+            box-shadow: 0 36px 64px -48px var(--shadow-strong);
         }
         header h1 {
-            margin-bottom: 0.5rem;
-            font-size: clamp(2rem, 5vw, 3rem);
+            margin: 0;
+            font-size: clamp(2.1rem, 5vw, 3.2rem);
             letter-spacing: -0.03em;
         }
         header p {
-            margin: 0 auto;
+            margin: 0;
             max-width: 640px;
+            color: var(--text-muted);
+        }
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 0.45rem 0.9rem;
+            border-radius: 999px;
+            border: 1px solid var(--outline-strong);
+            background: var(--surface-alt);
             color: var(--text-muted);
         }
         .grid {
             display: grid;
-            gap: 1.75rem;
+            gap: 2rem;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            align-items: start;
         }
         .card {
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
             background: var(--surface);
             border: 1px solid var(--outline);
-            border-radius: 20px;
-            padding: 1.75rem;
-            box-shadow: 0 24px 40px -28px rgba(17, 24, 39, 0.35);
-            backdrop-filter: blur(10px);
+            border-radius: 24px;
+            padding: 2.25rem;
+            box-shadow: 0 28px 48px -40px var(--shadow-soft);
         }
         .card h2 {
-            margin-top: 0;
-            font-size: 1.35rem;
-            margin-bottom: 0.75rem;
+            margin: 0;
+            font-size: 1.4rem;
+            letter-spacing: -0.01em;
         }
         .card p.description {
-            margin-top: 0;
+            margin: 0;
             color: var(--text-muted);
-            margin-bottom: 1.25rem;
+            font-size: 0.98rem;
+            line-height: 1.6;
         }
         .field {
-            margin-bottom: 1.15rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
         }
         .field label {
             display: flex;
             justify-content: space-between;
+            align-items: baseline;
             gap: 1rem;
             font-weight: 600;
             font-size: 0.95rem;
-            margin-bottom: 0.35rem;
             color: var(--text-primary);
         }
         .field label span.helper {
@@ -120,23 +163,28 @@ CONFIG_TEMPLATE = dedent(
         input[type="text"],
         select {
             width: 100%;
-            background: var(--surface-muted);
+            background: var(--surface-alt);
             border: 1px solid var(--outline);
-            border-radius: 12px;
+            border-radius: 14px;
             color: var(--text-primary);
-            padding: 0.65rem 0.85rem;
+            padding: 0.7rem 0.9rem;
             font-size: 1rem;
-            transition: border 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
         }
-        input[type="text"]:focus,
-        select:focus {
-            outline: none;
+        input[type="text"]:hover,
+        select:hover {
             border-color: var(--outline-strong);
-            box-shadow: 0 0 0 3px rgba(148, 148, 160, 0.25);
+        }
+        input[type="text"]:focus-visible,
+        select:focus-visible {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 4px var(--focus-ring);
             background: var(--surface);
         }
         input[type="range"] {
             width: 100%;
+            accent-color: var(--accent);
         }
         .range-value {
             font-weight: 600;
@@ -144,46 +192,60 @@ CONFIG_TEMPLATE = dedent(
         }
         .actions {
             display: flex;
-            gap: 0.75rem;
             flex-wrap: wrap;
-            margin-top: 1.25rem;
+            gap: 0.85rem;
+            margin-top: 0.5rem;
         }
         button {
             appearance: none;
-            border: none;
-            border-radius: 999px;
-            padding: 0.65rem 1.35rem;
-            background: linear-gradient(120deg, var(--accent), #3f3f46);
+            border: 1px solid transparent;
+            border-radius: 16px;
+            padding: 0.75rem 1.6rem;
+            background: var(--accent);
             color: var(--accent-contrast);
             font-weight: 600;
             font-size: 0.95rem;
+            letter-spacing: 0.01em;
             cursor: pointer;
             transition: transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
-        }
-        button.secondary {
-            background: transparent;
-            color: var(--text-primary);
-            border: 1px solid var(--outline-strong);
+            box-shadow: 0 16px 32px -24px var(--shadow-strong);
         }
         button:hover:not(:disabled) {
             transform: translateY(-1px);
-            box-shadow: 0 12px 24px -18px rgba(17, 24, 39, 0.35);
+            box-shadow: 0 18px 36px -28px var(--shadow-strong);
+            filter: brightness(1.05);
+        }
+        button:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 4px var(--focus-ring);
+        }
+        button.secondary {
+            background: var(--surface);
+            color: var(--text-primary);
+            border-color: var(--outline-strong);
+            box-shadow: none;
+        }
+        button.secondary:hover:not(:disabled) {
+            filter: none;
+            background: var(--surface-alt);
         }
         button:disabled {
             cursor: not-allowed;
-            opacity: 0.6;
+            opacity: 0.55;
+            transform: none;
             box-shadow: none;
+            filter: none;
         }
         .muted {
-            font-size: 0.85rem;
+            font-size: 0.88rem;
             color: var(--text-muted);
         }
         .notice {
             margin-bottom: 1rem;
-            padding: 0.75rem 1rem;
-            border-radius: 14px;
-            background: var(--surface-muted);
-            border: 1px dashed var(--outline);
+            padding: 0.9rem 1.1rem;
+            border-radius: 18px;
+            background: var(--surface-alt);
+            border: 1px solid var(--outline);
             color: var(--text-primary);
         }
         .status {
@@ -191,49 +253,42 @@ CONFIG_TEMPLATE = dedent(
             font-size: 0.95rem;
             color: var(--text-primary);
             min-height: 1.2em;
-            padding: 0.4rem 0.6rem;
-            border-radius: 10px;
-            background: transparent;
+            padding: 0.5rem 0.75rem;
+            border-radius: 12px;
+            background: var(--surface-alt);
+            border-left: 3px solid transparent;
         }
         .status.error {
-            background: var(--surface-muted);
-            border-left: 4px solid var(--outline-strong);
+            border-left-color: var(--outline-strong);
         }
         .status.success {
-            background: var(--surface-muted);
-            border-left: 4px solid var(--outline);
+            border-left-color: var(--outline);
         }
         .preview {
-            background: var(--surface-muted);
-            border: 1px dashed var(--outline);
-            border-radius: 14px;
-            padding: 0.9rem 1rem;
+            background: var(--surface-alt);
+            border: 1px solid var(--outline);
+            border-radius: 16px;
+            padding: 1rem 1.1rem;
             margin-top: 1rem;
             font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
             font-size: 0.9rem;
-            word-break: break-all;
+            word-break: break-word;
             color: var(--text-primary);
-        }
-        .pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            background: var(--surface-muted);
-            border: 1px solid var(--outline);
-            border-radius: 999px;
-            padding: 0.35rem 0.75rem;
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: var(--text-muted);
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
         }
         .hidden {
             display: none !important;
         }
         @media (max-width: 720px) {
+            body {
+                padding: 0 1.25rem;
+            }
             main {
-                padding: 2.5rem 1rem 3rem;
+                padding: 3rem 0 3.5rem;
+                gap: 2rem;
+            }
+            header,
+            .card {
+                padding: 1.85rem;
             }
             .actions {
                 flex-direction: column;
