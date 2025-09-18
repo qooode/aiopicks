@@ -123,6 +123,35 @@ class ProfileContext:
     force_refresh: bool = False
 
 
+@dataclass
+class ProfileStatus:
+    """Expose runtime information about a profile for the config UI."""
+
+    state: ProfileState
+    has_catalogs: bool
+    needs_refresh: bool
+    refreshing: bool
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "profileId": self.state.id,
+            "openrouterModel": self.state.openrouter_model,
+            "catalogCount": self.state.catalog_count,
+            "refreshIntervalSeconds": self.state.refresh_interval_seconds,
+            "responseCacheSeconds": self.state.response_cache_seconds,
+            "lastRefreshedAt": (
+                self.state.last_refreshed_at.isoformat() if self.state.last_refreshed_at else None
+            ),
+            "nextRefreshAt": (
+                self.state.next_refresh_at.isoformat() if self.state.next_refresh_at else None
+            ),
+            "hasCatalogs": self.has_catalogs,
+            "needsRefresh": self.needs_refresh,
+            "refreshing": self.refreshing,
+            "ready": self.has_catalogs and not self.refreshing,
+        }
+
+
 class CatalogService:
     """Coordinates Trakt ingestion with AI catalog generation."""
 
@@ -140,6 +169,7 @@ class CatalogService:
         self._locks: dict[str, asyncio.Lock] = {}
         self._refresh_task: asyncio.Task[None] | None = None
         self._refresh_poll_seconds = 60
+        self._refresh_jobs: dict[str, asyncio.Task[None]] = {}
 
     async def start(self) -> None:
         """Initialise the service and launch the refresh loop."""
@@ -166,7 +196,7 @@ class CatalogService:
     ) -> tuple[ProfileState, list[dict[str, Any]]]:
         """Return manifest catalog entries for the resolved profile."""
 
-        state = await self.prepare_profile(config)
+        state = await self.prepare_profile(config, wait_for_refresh=False)
         catalogs = await self._load_catalogs(state.id)
         grouped: dict[str, list[Catalog]] = {"movie": [], "series": []}
         for catalog in catalogs:
@@ -185,7 +215,7 @@ class CatalogService:
     ) -> dict[str, Any]:
         """Return the catalog payload for a profile/content combination."""
 
-        state = await self.prepare_profile(config)
+        state = await self.prepare_profile(config, wait_for_refresh=False)
         catalog = await self._load_single_catalog(state.id, content_type, catalog_id)
         if catalog is None:
             raise KeyError(f"Catalog {catalog_id} not found for profile {state.id}")
@@ -199,7 +229,7 @@ class CatalogService:
     ) -> dict[str, Any]:
         """Locate a specific meta entry within the stored catalogs."""
 
-        state = await self.prepare_profile(config)
+        state = await self.prepare_profile(config, wait_for_refresh=False)
         catalogs = await self._load_catalogs(state.id, content_type=content_type)
         for catalog in catalogs:
             for index, item in enumerate(catalog.items):
@@ -208,26 +238,37 @@ class CatalogService:
                     return meta
         raise KeyError(f"Meta {meta_id} not found for profile {state.id}")
 
-    async def prepare_profile(self, config: ManifestConfig) -> ProfileState:
+    async def prepare_profile(
+        self, config: ManifestConfig, *, wait_for_refresh: bool = True
+    ) -> ProfileState:
         """Resolve the profile, ensure catalogs are current, and return its state."""
 
         context = await self._resolve_profile(config)
-        return await self.ensure_catalogs(context.state, force=context.force_refresh)
+        return await self.ensure_catalogs(
+            context.state,
+            force=context.force_refresh,
+            wait=wait_for_refresh,
+        )
 
     async def ensure_catalogs(
-        self, state: ProfileState, *, force: bool = False
+        self, state: ProfileState, *, force: bool = False, wait: bool = True
     ) -> ProfileState:
         """Refresh catalogs for the profile if the cache is stale."""
 
         lock = self._locks.setdefault(state.id, asyncio.Lock())
         async with lock:
             latest_state = await self._load_profile_state(state.id) or state
-            needs_refresh = force or await self._needs_refresh(latest_state)
+            needs_refresh, has_catalogs = await self._needs_refresh(latest_state)
+            if force:
+                needs_refresh = True
             if not needs_refresh:
                 return latest_state
-            await self._refresh_catalogs(latest_state)
-            refreshed_state = await self._load_profile_state(state.id)
-            return refreshed_state or latest_state
+            if wait or not has_catalogs:
+                await self._refresh_catalogs(latest_state)
+                refreshed_state = await self._load_profile_state(state.id)
+                return refreshed_state or latest_state
+            self._schedule_refresh(latest_state, force=True)
+            return latest_state
 
     async def _refresh_loop(self) -> None:
         while True:
@@ -251,17 +292,18 @@ class CatalogService:
             state = await self._load_profile_state(profile_id)
             if state is None:
                 continue
-            await self.ensure_catalogs(state, force=True)
+            await self.ensure_catalogs(state, force=True, wait=False)
 
-    async def _needs_refresh(self, state: ProfileState) -> bool:
+    async def _needs_refresh(self, state: ProfileState) -> tuple[bool, bool]:
+        has_catalogs = await self._has_catalogs(state.id)
         if state.last_refreshed_at is None:
-            return True
-        if not await self._has_catalogs(state.id):
-            return True
+            return True, has_catalogs
+        if not has_catalogs:
+            return True, has_catalogs
         expires_at = state.last_refreshed_at + timedelta(
             seconds=state.response_cache_seconds
         )
-        return datetime.utcnow() >= expires_at
+        return datetime.utcnow() >= expires_at, has_catalogs
 
     async def _has_catalogs(self, profile_id: str) -> bool:
         async with self._session_factory() as session:
@@ -272,6 +314,28 @@ class CatalogService:
             )
             result = await session.execute(stmt)
             return result.scalar_one_or_none() is not None
+
+    def _schedule_refresh(self, state: ProfileState, *, force: bool = False) -> None:
+        existing = self._refresh_jobs.get(state.id)
+        if existing and not existing.done():
+            return
+
+        async def _runner() -> None:
+            try:
+                await self.ensure_catalogs(state, force=force, wait=True)
+            except Exception as exc:  # pragma: no cover - background safety net
+                logger.exception(
+                    "Background refresh for profile %s failed: %s", state.id, exc
+                )
+            finally:
+                self._refresh_jobs.pop(state.id, None)
+
+        self._refresh_jobs[state.id] = asyncio.create_task(_runner())
+
+    def request_refresh(self, state: ProfileState, *, force: bool = False) -> None:
+        """Expose background refresh scheduling to API consumers."""
+
+        self._schedule_refresh(state, force=force)
 
     async def _refresh_catalogs(self, state: ProfileState) -> None:
         logger.info(
@@ -450,6 +514,40 @@ class CatalogService:
             state = self._profile_to_state(profile)
 
         return ProfileContext(state=state, force_refresh=refresh_required or created)
+
+    async def resolve_profile(self, config: ManifestConfig) -> ProfileContext:
+        """Expose profile resolution without triggering catalog refreshes."""
+
+        return await self._resolve_profile(config)
+
+    async def get_profile_status(self, profile_id: str) -> ProfileStatus | None:
+        state = await self._load_profile_state(profile_id)
+        if state is None:
+            return None
+        needs_refresh, has_catalogs = await self._needs_refresh(state)
+        refreshing = self._is_refreshing(profile_id)
+        if refreshing:
+            needs_refresh = True
+        return ProfileStatus(
+            state=state,
+            has_catalogs=has_catalogs,
+            needs_refresh=needs_refresh,
+            refreshing=refreshing,
+        )
+
+    def _is_refreshing(self, profile_id: str) -> bool:
+        task = self._refresh_jobs.get(profile_id)
+        return bool(task and not task.done())
+
+    def is_refreshing(self, profile_id: str) -> bool:
+        """Return whether a refresh task is currently running for the profile."""
+
+        return self._is_refreshing(profile_id)
+
+    def determine_profile_id(self, config: ManifestConfig) -> str:
+        """Expose profile id derivation for external callers."""
+
+        return self._determine_profile_id(config)
 
     def _determine_profile_id(self, config: ManifestConfig) -> str:
         if config.profile_id:
