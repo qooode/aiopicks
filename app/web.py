@@ -250,7 +250,7 @@ CONFIG_TEMPLATE = dedent(
             <header>
             <p class="pill">Stremio Add-on</p>
             <h1>Configure __APP_NAME__</h1>
-            <p>Connect your Trakt account, fine-tune the manifest name, and copy an install-ready link for Stremio.</p>
+            <p>Connect your Trakt account, adjust the catalog settings, and copy an install-ready link for Stremio.</p>
         </header>
         <div class="grid">
             <section class="card" id="trakt-card">
@@ -265,11 +265,11 @@ CONFIG_TEMPLATE = dedent(
             </section>
             <section class="card" id="manifest-card">
                 <h2>Manifest builder</h2>
-                <p class="description">Choose how many AI generated catalogs to expose, set the display name, and copy a ready-to-install manifest URL. Empty fields fall back to the server defaults.</p>
+                <p class="description">Choose how many AI generated catalogs to expose and copy a ready-to-install manifest URL. Empty fields fall back to the server defaults.</p>
                 <p class="notice hidden" id="manifest-lock">Sign in with Trakt to unlock personalised manifest links.</p>
                 <div class="field">
-                    <label for="config-manifest-name">Add-on name <span class="helper">Defaults to __APP_NAME__</span></label>
-                    <input id="config-manifest-name" type="text" placeholder="Add-on name as seen in Stremio" maxlength="120" />
+                    <label>Add-on name <span class="helper">Fixed to __APP_NAME__</span></label>
+                    <p class="muted">Stremio will always display this add-on as <strong>__APP_NAME__</strong>.</p>
                 </div>
                 <div class="field">
                     <label for="config-openrouter-key">OpenRouter API key <span class="helper">Optional – stored client side only</span></label>
@@ -320,9 +320,6 @@ CONFIG_TEMPLATE = dedent(
         (function () {
             const defaults = JSON.parse('__DEFAULTS_JSON__');
             const baseManifestUrl = new URL('/manifest.json', window.location.origin).toString();
-            const defaultManifestName = (defaults.manifestName || defaults.appName || '').trim();
-
-            const manifestNameInput = document.getElementById('config-manifest-name');
             const openrouterKey = document.getElementById('config-openrouter-key');
             const openrouterModel = document.getElementById('config-openrouter-model');
             const catalogSlider = document.getElementById('config-catalog-count');
@@ -357,7 +354,6 @@ CONFIG_TEMPLATE = dedent(
             let profileStatus = null;
             let statusPollTimer = null;
 
-            manifestNameInput.value = defaultManifestName;
             openrouterModel.value = defaults.openrouterModel || '';
             catalogSlider.value = defaults.catalogCount || catalogSlider.min || 1;
             catalogValue.textContent = catalogSlider.value;
@@ -385,11 +381,6 @@ CONFIG_TEMPLATE = dedent(
                 if (status && status.refreshing) {
                     scheduleStatusPoll();
                 }
-            });
-
-            manifestNameInput.addEventListener('input', () => {
-                markProfileDirty();
-                updateManifestPreview();
             });
 
             catalogSlider.addEventListener('input', () => {
@@ -707,12 +698,7 @@ CONFIG_TEMPLATE = dedent(
             }
 
             function collectManifestSettings() {
-                const trimmedManifestName = manifestNameInput.value.trim();
                 return {
-                    manifestName:
-                        trimmedManifestName && trimmedManifestName !== defaultManifestName
-                            ? trimmedManifestName
-                            : '',
                     openrouterKey: openrouterKey.value.trim(),
                     openrouterModel: openrouterModel.value.trim(),
                     catalogCount: catalogSlider.value,
@@ -730,7 +716,6 @@ CONFIG_TEMPLATE = dedent(
                 if (includeProfileId && profileStatus && profileStatus.profileId) {
                     payload.profileId = profileStatus.profileId;
                 }
-                if (settings.manifestName) payload.manifestName = settings.manifestName;
                 if (settings.openrouterKey) payload.openrouterKey = settings.openrouterKey;
                 if (settings.openrouterModel) payload.openrouterModel = settings.openrouterModel;
                 if (settings.catalogCount) payload.catalogCount = Number(settings.catalogCount);
@@ -849,7 +834,6 @@ CONFIG_TEMPLATE = dedent(
                 } else if (settings.openrouterKey) {
                     params.set('openrouterKey', settings.openrouterKey);
                 }
-                if (settings.manifestName) params.set('manifestName', settings.manifestName);
                 if (settings.openrouterModel) params.set('openrouterModel', settings.openrouterModel);
                 if (settings.catalogCount) params.set('catalogCount', settings.catalogCount);
                 if (settings.catalogItems) params.set('catalogItems', settings.catalogItems);
@@ -1048,7 +1032,6 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
 
     defaults = {
         "appName": settings.app_name,
-        "manifestName": settings.app_name,
         "openrouterModel": settings.openrouter_model,
         "catalogCount": settings.catalog_count,
         "catalogItemCount": settings.catalog_item_count,

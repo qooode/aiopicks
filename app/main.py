@@ -117,13 +117,10 @@ def register_routes(fastapi_app: FastAPI) -> None:
             profile_state, catalogs = await service.list_manifest_catalogs(config)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        manifest_name = (config.manifest_name or "").strip()
-        if not manifest_name:
-            manifest_name = settings.app_name
         return {
             "id": "com.aiopicks.python",
             "version": "1.0.0",
-            "name": manifest_name,
+            "name": settings.app_name,
             "description": (
                 "Dynamic, AI-randomized catalogs powered by OpenRouter's Google Gemini 2.5 "
                 "Flash Lite model and your Trakt history."
