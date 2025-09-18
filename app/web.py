@@ -21,35 +21,35 @@ CONFIG_TEMPLATE = dedent(
         :root {
             color-scheme: light dark;
             font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-            --page: #f6f7f8;
+            --page: #f5f5f4;
             --surface: #ffffff;
-            --surface-alt: #f9fafb;
-            --surface-strong: #eef1f6;
-            --text-primary: #0f172a;
+            --surface-raised: #f7f7f7;
+            --surface-strong: #ededed;
+            --text-primary: #111827;
             --text-muted: #6b7280;
-            --outline: #d3d8e2;
-            --outline-strong: #b5bdc9;
-            --shadow-soft: rgba(15, 23, 42, 0.12);
-            --shadow-strong: rgba(15, 23, 42, 0.2);
-            --accent: #1f2937;
+            --outline: rgba(17, 24, 39, 0.08);
+            --outline-strong: rgba(17, 24, 39, 0.16);
+            --shadow-soft: rgba(15, 23, 42, 0.08);
+            --shadow-strong: rgba(15, 23, 42, 0.16);
+            --accent: #1c1f24;
             --accent-contrast: #f9fafb;
-            --focus-ring: rgba(71, 85, 105, 0.2);
+            --focus-ring: rgba(17, 24, 39, 0.16);
         }
         @media (prefers-color-scheme: dark) {
             :root {
-                --page: #020617;
-                --surface: rgba(15, 23, 42, 0.72);
-                --surface-alt: rgba(30, 41, 59, 0.72);
-                --surface-strong: rgba(51, 65, 85, 0.68);
+                --page: #0b1220;
+                --surface: rgba(15, 23, 42, 0.86);
+                --surface-raised: rgba(30, 41, 59, 0.82);
+                --surface-strong: rgba(51, 65, 85, 0.78);
                 --text-primary: #e2e8f0;
                 --text-muted: #94a3b8;
-                --outline: rgba(148, 163, 184, 0.45);
-                --outline-strong: rgba(148, 163, 184, 0.7);
-                --shadow-soft: rgba(2, 6, 23, 0.45);
-                --shadow-strong: rgba(2, 6, 23, 0.65);
+                --outline: rgba(148, 163, 184, 0.18);
+                --outline-strong: rgba(148, 163, 184, 0.32);
+                --shadow-soft: rgba(2, 6, 23, 0.42);
+                --shadow-strong: rgba(2, 6, 23, 0.58);
                 --accent: #e2e8f0;
                 --accent-contrast: #020617;
-                --focus-ring: rgba(148, 163, 184, 0.25);
+                --focus-ring: rgba(148, 163, 184, 0.28);
             }
         }
         * {
@@ -62,7 +62,7 @@ CONFIG_TEMPLATE = dedent(
             color: var(--text-primary);
             line-height: 1.65;
             -webkit-font-smoothing: antialiased;
-            padding: 0 1.75rem;
+            padding: 0 1.75rem 2.5rem;
         }
         a {
             color: inherit;
@@ -74,31 +74,32 @@ CONFIG_TEMPLATE = dedent(
             text-decoration-color: var(--accent);
         }
         main {
-            width: min(1080px, 100%);
+            width: min(940px, 100%);
             margin: 0 auto;
             padding: 4rem 0 4.5rem;
-            display: grid;
+            display: flex;
+            flex-direction: column;
             gap: 2.5rem;
         }
         header {
             display: flex;
             flex-direction: column;
-            gap: 1rem;
-            padding: 2.5rem;
-            border-radius: 26px;
+            gap: 1.25rem;
+            padding: 3rem;
+            border-radius: 32px;
             background: var(--surface);
-            border: 1px solid var(--outline);
-            box-shadow: 0 36px 64px -48px var(--shadow-strong);
+            box-shadow: 0 48px 96px -72px var(--shadow-strong);
         }
         header h1 {
             margin: 0;
-            font-size: clamp(2.1rem, 5vw, 3.2rem);
-            letter-spacing: -0.03em;
+            font-size: clamp(2.4rem, 5vw, 3.4rem);
+            letter-spacing: -0.035em;
         }
         header p {
             margin: 0;
-            max-width: 640px;
+            max-width: 620px;
             color: var(--text-muted);
+            font-size: 1.05rem;
         }
         .pill {
             display: inline-flex;
@@ -108,38 +109,54 @@ CONFIG_TEMPLATE = dedent(
             font-weight: 600;
             letter-spacing: 0.08em;
             text-transform: uppercase;
-            padding: 0.45rem 0.9rem;
+            padding: 0.5rem 1rem;
             border-radius: 999px;
-            border: 1px solid var(--outline-strong);
-            background: var(--surface-alt);
+            background: var(--surface-raised);
             color: var(--text-muted);
         }
         .grid {
-            display: grid;
-            gap: 2rem;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            align-items: start;
+            display: flex;
+            flex-direction: column;
+            gap: 2.25rem;
         }
         .card {
             display: flex;
             flex-direction: column;
             gap: 1.25rem;
             background: var(--surface);
-            border: 1px solid var(--outline);
-            border-radius: 24px;
-            padding: 2.25rem;
-            box-shadow: 0 28px 48px -40px var(--shadow-soft);
+            border-radius: 28px;
+            padding: 2.75rem;
+            box-shadow: 0 40px 96px -72px var(--shadow-soft);
         }
         .card h2 {
             margin: 0;
-            font-size: 1.4rem;
-            letter-spacing: -0.01em;
+            font-size: 1.55rem;
+            letter-spacing: -0.015em;
         }
         .card p.description {
             margin: 0;
             color: var(--text-muted);
-            font-size: 0.98rem;
-            line-height: 1.6;
+            font-size: 1rem;
+            line-height: 1.7;
+        }
+        .card-intro {
+            display: flex;
+            flex-direction: column;
+            gap: 0.7rem;
+        }
+        .card-section {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            padding: 1.35rem 1.6rem;
+            border-radius: 22px;
+            background: var(--surface-raised);
+            box-shadow: 0 22px 44px -34px var(--shadow-soft);
+        }
+        .card-section h3 {
+            margin: 0;
+            font-size: 1.05rem;
+            letter-spacing: -0.01em;
         }
         .field {
             display: flex;
@@ -163,23 +180,23 @@ CONFIG_TEMPLATE = dedent(
         input[type="text"],
         select {
             width: 100%;
-            background: var(--surface-alt);
-            border: 1px solid var(--outline);
-            border-radius: 14px;
+            background: var(--surface-raised);
+            border: none;
+            border-radius: 16px;
             color: var(--text-primary);
-            padding: 0.7rem 0.9rem;
+            padding: 0.75rem 1rem;
             font-size: 1rem;
-            transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+            box-shadow: inset 0 0 0 1px var(--outline);
+            transition: box-shadow 0.2s ease, background-color 0.2s ease;
         }
         input[type="text"]:hover,
         select:hover {
-            border-color: var(--outline-strong);
+            box-shadow: inset 0 0 0 1px var(--outline-strong);
         }
         input[type="text"]:focus-visible,
         select:focus-visible {
             outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 4px var(--focus-ring);
+            box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 6px var(--focus-ring);
             background: var(--surface);
         }
         input[type="range"] {
@@ -198,9 +215,9 @@ CONFIG_TEMPLATE = dedent(
         }
         button {
             appearance: none;
-            border: 1px solid transparent;
-            border-radius: 16px;
-            padding: 0.75rem 1.6rem;
+            border: none;
+            border-radius: 18px;
+            padding: 0.85rem 1.75rem;
             background: var(--accent);
             color: var(--accent-contrast);
             font-weight: 600;
@@ -208,26 +225,26 @@ CONFIG_TEMPLATE = dedent(
             letter-spacing: 0.01em;
             cursor: pointer;
             transition: transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
-            box-shadow: 0 16px 32px -24px var(--shadow-strong);
+            box-shadow: 0 28px 54px -40px var(--shadow-strong);
         }
         button:hover:not(:disabled) {
             transform: translateY(-1px);
-            box-shadow: 0 18px 36px -28px var(--shadow-strong);
-            filter: brightness(1.05);
+            box-shadow: 0 32px 68px -48px var(--shadow-strong);
+            filter: brightness(1.02);
         }
         button:focus-visible {
             outline: none;
-            box-shadow: 0 0 0 4px var(--focus-ring);
+            box-shadow: 0 0 0 6px var(--focus-ring);
         }
         button.secondary {
             background: var(--surface);
             color: var(--text-primary);
-            border-color: var(--outline-strong);
-            box-shadow: none;
+            box-shadow: 0 24px 52px -44px var(--shadow-soft);
         }
         button.secondary:hover:not(:disabled) {
             filter: none;
-            background: var(--surface-alt);
+            background: var(--surface);
+            box-shadow: 0 28px 64px -52px var(--shadow-soft);
         }
         button:disabled {
             cursor: not-allowed;
@@ -242,53 +259,53 @@ CONFIG_TEMPLATE = dedent(
         }
         .notice {
             margin-bottom: 1rem;
-            padding: 0.9rem 1.1rem;
+            padding: 1rem 1.25rem;
             border-radius: 18px;
-            background: var(--surface-alt);
-            border: 1px solid var(--outline);
+            background: var(--surface-raised);
             color: var(--text-primary);
+            box-shadow: 0 20px 36px -30px var(--shadow-soft);
         }
         .status {
             margin-top: 0.85rem;
             font-size: 0.95rem;
             color: var(--text-primary);
             min-height: 1.2em;
-            padding: 0.5rem 0.75rem;
-            border-radius: 12px;
-            background: var(--surface-alt);
-            border-left: 3px solid transparent;
+            padding: 0.6rem 0.85rem;
+            border-radius: 14px;
+            background: var(--surface-raised);
+            box-shadow: 0 16px 32px -28px var(--shadow-soft);
         }
         .status.error {
-            border-left-color: var(--outline-strong);
+            color: inherit;
         }
         .status.success {
-            border-left-color: var(--outline);
+            color: inherit;
         }
         .preview {
-            background: var(--surface-alt);
-            border: 1px solid var(--outline);
-            border-radius: 16px;
-            padding: 1rem 1.1rem;
+            background: var(--surface-raised);
+            border-radius: 18px;
+            padding: 1.2rem 1.35rem;
             margin-top: 1rem;
             font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
             font-size: 0.9rem;
             word-break: break-word;
             color: var(--text-primary);
+            box-shadow: 0 24px 48px -38px var(--shadow-soft);
         }
         .hidden {
             display: none !important;
         }
         @media (max-width: 720px) {
             body {
-                padding: 0 1.25rem;
+                padding: 0 1.25rem 2rem;
             }
             main {
                 padding: 3rem 0 3.5rem;
-                gap: 2rem;
+                gap: 2.25rem;
             }
             header,
             .card {
-                padding: 1.85rem;
+                padding: 2rem;
             }
             .actions {
                 flex-direction: column;
@@ -303,74 +320,89 @@ CONFIG_TEMPLATE = dedent(
     <body>
         <main>
             <header>
-            <p class="pill">Stremio Add-on</p>
-            <h1>Configure __APP_NAME__</h1>
-            <p>Connect your Trakt account, adjust the catalog settings, and copy an install-ready link for Stremio.</p>
-        </header>
-        <div class="grid">
-            <section class="card" id="trakt-card">
-                <h2>Connect Trakt</h2>
-                <p class="description">Sign in seamlessly—no device codes or copy/paste hoops required.</p>
-                <p class="muted" id="trakt-hint"></p>
-                <div class="actions">
-                    <button id="trakt-login" type="button">Sign in with Trakt</button>
-                    <button id="trakt-disconnect" type="button" class="secondary hidden">Disconnect</button>
-                </div>
-                <div class="status" id="trakt-status"></div>
-            </section>
-            <section class="card" id="manifest-card">
-                <h2>Manifest builder</h2>
-                <p class="description">Choose how many AI generated catalogs to expose and copy a ready-to-install manifest URL. Empty fields fall back to the server defaults.</p>
-                <p class="notice hidden" id="manifest-lock">Sign in with Trakt to unlock personalised manifest links.</p>
-                <div class="field">
-                    <label>Add-on name <span class="helper">Fixed to __APP_NAME__</span></label>
-                    <p class="muted">Stremio will always display this add-on as <strong>__APP_NAME__</strong>.</p>
-                </div>
-                <div class="field">
-                    <label for="config-openrouter-key">OpenRouter API key <span class="helper">Optional – stored client side only</span></label>
-                    <input id="config-openrouter-key" type="text" placeholder="sk-or-..." autocomplete="off" spellcheck="false" />
-                </div>
-                <div class="field">
-                    <label for="config-openrouter-model">Model <span class="helper">Default: __OPENROUTER_MODEL__</span></label>
-                    <input id="config-openrouter-model" type="text" placeholder="google/gemini-2.5-flash-lite" />
-                </div>
-                <div class="field">
-                    <label for="config-catalog-count">Catalog rows <span class="range-value" id="catalog-count-value"></span></label>
-                    <input id="config-catalog-count" type="range" min="1" max="12" step="1" />
-                </div>
-                <div class="field">
-                    <label for="config-catalog-items">Items per catalog <span class="range-value" id="catalog-items-value"></span></label>
-                    <input id="config-catalog-items" type="range" min="4" max="100" step="1" />
-                </div>
-                <div class="field">
-                    <label for="config-refresh-interval">Refresh cadence <span class="helper">How often the AI rethinks the catalogs</span></label>
-                    <select id="config-refresh-interval">
-                        <option value="3600">Every hour</option>
-                        <option value="14400">Every 4 hours</option>
-                        <option value="43200">Every 12 hours</option>
-                        <option value="86400">Every 24 hours</option>
-                    </select>
-                </div>
-                <div class="field">
-                    <label for="config-cache-ttl">Response cache <span class="helper">Stremio responses stay fresh for...</span></label>
-                    <select id="config-cache-ttl">
-                        <option value="300">5 minutes</option>
-                        <option value="900">15 minutes</option>
-                        <option value="1800">30 minutes</option>
-                        <option value="3600">60 minutes</option>
-                    </select>
-                </div>
-                <div class="actions">
-                    <button id="prepare-profile" type="button">Generate catalogs</button>
-                    <button id="copy-configured-manifest" type="button" class="secondary">Copy configured manifest</button>
-                    <button id="copy-default-manifest" type="button" class="secondary">Copy public manifest</button>
-                </div>
-                <div class="status" id="manifest-status"></div>
-                <p class="muted" id="copy-message"></p>
-                <div class="preview" id="manifest-preview"></div>
-            </section>
-        </div>
-    </main>
+                <p class="pill">Stremio Add-on</p>
+                <h1>Configure __APP_NAME__</h1>
+                <p>Connect your Trakt account, tune the catalog cadence, and grab an install-ready manifest without leaving this page.</p>
+            </header>
+            <div class="grid">
+                <section class="card" id="trakt-card">
+                    <div class="card-intro">
+                        <h2>Connect Trakt</h2>
+                        <p class="description">Sign in seamlessly—no device codes or copy/paste hoops required.</p>
+                    </div>
+                    <div class="card-section">
+                        <p class="muted" id="trakt-hint"></p>
+                        <div class="actions">
+                            <button id="trakt-login" type="button">Sign in with Trakt</button>
+                            <button id="trakt-disconnect" type="button" class="secondary hidden">Disconnect</button>
+                        </div>
+                        <div class="status" id="trakt-status"></div>
+                    </div>
+                </section>
+                <section class="card" id="manifest-card">
+                    <div class="card-intro">
+                        <h2>Manifest builder</h2>
+                        <p class="description">Choose how many AI generated catalogs to expose and copy a ready-to-install manifest URL. Empty fields fall back to the server defaults.</p>
+                    </div>
+                    <div class="card-section">
+                        <h3>Access &amp; model</h3>
+                        <p class="notice hidden" id="manifest-lock">Sign in with Trakt to unlock personalised manifest links.</p>
+                        <div class="field">
+                            <label>Add-on name <span class="helper">Fixed to __APP_NAME__</span></label>
+                            <p class="muted">Stremio will always display this add-on as <strong>__APP_NAME__</strong>.</p>
+                        </div>
+                        <div class="field">
+                            <label for="config-openrouter-key">OpenRouter API key <span class="helper">Optional – stored client side only</span></label>
+                            <input id="config-openrouter-key" type="text" placeholder="sk-or-..." autocomplete="off" spellcheck="false" />
+                        </div>
+                        <div class="field">
+                            <label for="config-openrouter-model">Model <span class="helper">Default: __OPENROUTER_MODEL__</span></label>
+                            <input id="config-openrouter-model" type="text" placeholder="google/gemini-2.5-flash-lite" />
+                        </div>
+                    </div>
+                    <div class="card-section">
+                        <h3>Catalog tuning</h3>
+                        <div class="field">
+                            <label for="config-catalog-count">Catalog rows <span class="range-value" id="catalog-count-value"></span></label>
+                            <input id="config-catalog-count" type="range" min="1" max="12" step="1" />
+                        </div>
+                        <div class="field">
+                            <label for="config-catalog-items">Items per catalog <span class="range-value" id="catalog-items-value"></span></label>
+                            <input id="config-catalog-items" type="range" min="4" max="100" step="1" />
+                        </div>
+                        <div class="field">
+                            <label for="config-refresh-interval">Refresh cadence <span class="helper">How often the AI rethinks the catalogs</span></label>
+                            <select id="config-refresh-interval">
+                                <option value="3600">Every hour</option>
+                                <option value="14400">Every 4 hours</option>
+                                <option value="43200">Every 12 hours</option>
+                                <option value="86400">Every 24 hours</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label for="config-cache-ttl">Response cache <span class="helper">Stremio responses stay fresh for...</span></label>
+                            <select id="config-cache-ttl">
+                                <option value="300">5 minutes</option>
+                                <option value="900">15 minutes</option>
+                                <option value="1800">30 minutes</option>
+                                <option value="3600">60 minutes</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="card-section">
+                        <h3>Manifest link</h3>
+                        <div class="actions">
+                            <button id="prepare-profile" type="button">Generate catalogs</button>
+                            <button id="copy-configured-manifest" type="button" class="secondary">Copy configured manifest</button>
+                            <button id="copy-default-manifest" type="button" class="secondary">Copy public manifest</button>
+                        </div>
+                        <div class="status" id="manifest-status"></div>
+                        <p class="muted" id="copy-message"></p>
+                        <div class="preview" id="manifest-preview"></div>
+                    </div>
+                </section>
+            </div>
+        </main>
     <script>
         (function () {
             const defaults = JSON.parse('__DEFAULTS_JSON__');
