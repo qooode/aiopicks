@@ -169,6 +169,12 @@ def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:
             config, "movie", catalog_id
         )
         assert payload["catalogName"] == "Test Catalog"
+        assert payload["metas"] == [
+            {
+                "id": "tt1234567",
+                "type": "movie",
+            }
+        ]
 
         meta = await service.find_meta(config, "movie", "tt1234567")
         assert meta["id"] == "tt1234567"

@@ -35,11 +35,24 @@ class CatalogItem(BaseModel):
     maturity_rating: str | None = None
     providers: list[str] = Field(default_factory=list)
 
+    def build_meta_id(self, catalog_id: str, index: int) -> str:
+        """Return the unique identifier used for catalog/meta lookups."""
+
+        base_id = self.imdb_id or (f"trakt:{self.trakt_id}" if self.trakt_id else "")
+        return ensure_unique_meta_id(base_id, f"{catalog_id}-{self.title}", index)
+
+    def to_catalog_stub(self, catalog_id: str, index: int) -> dict[str, object]:
+        """Return a minimal meta entry for catalog listings."""
+
+        return {
+            "id": self.build_meta_id(catalog_id, index),
+            "type": self.type,
+        }
+
     def to_meta(self, catalog_id: str, index: int) -> dict[str, object]:
         """Return a Stremio meta dictionary."""
 
-        base_id = self.imdb_id or (f"trakt:{self.trakt_id}" if self.trakt_id else "")
-        meta_id = ensure_unique_meta_id(base_id, f"{catalog_id}-{self.title}", index)
+        meta_id = self.build_meta_id(catalog_id, index)
 
         meta: dict[str, object] = {
             "id": meta_id,
@@ -138,7 +151,10 @@ class Catalog(BaseModel):
     def to_catalog_response(self) -> dict[str, object]:
         """Return the Stremio catalog payload."""
 
-        metas = [item.to_meta(self.id, index) for index, item in enumerate(self.items)]
+        metas = [
+            item.to_catalog_stub(self.id, index)
+            for index, item in enumerate(self.items)
+        ]
         return {
             "metas": metas,
             "catalogName": self.title,
