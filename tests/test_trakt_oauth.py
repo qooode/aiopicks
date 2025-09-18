@@ -75,3 +75,17 @@ def test_trakt_login_url_uses_configured_redirect(monkeypatch) -> None:
         assert response.status_code == 200
         redirect_uri = _extract_redirect(response.json()["url"])
         assert redirect_uri == override
+
+
+def test_config_page_includes_callback_origin(monkeypatch) -> None:
+    with _test_client(monkeypatch) as client:
+        response = client.get(
+            "/config",
+            headers={
+                "x-forwarded-proto": "https",
+                "x-forwarded-host": "app.example",
+                "x-forwarded-port": "443",
+            },
+        )
+        assert response.status_code == 200
+        assert "\"traktCallbackOrigin\": \"https://app.example\"" in response.text

@@ -641,14 +641,19 @@ CONFIG_TEMPLATE = dedent(
 )
 
 
-def render_config_page(settings: Settings) -> str:
+def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
     """Return the full HTML for the `/config` landing page."""
 
-    callback_origin = ""
-    if settings.trakt_redirect_uri:
+    resolved_callback_origin = ""
+    candidate_origin = callback_origin.strip()
+    if candidate_origin:
+        resolved_callback_origin = candidate_origin.rstrip("/")
+    elif settings.trakt_redirect_uri:
         parsed = urlparse(str(settings.trakt_redirect_uri))
         if parsed.scheme and parsed.netloc:
-            callback_origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+            resolved_callback_origin = (
+                f"{parsed.scheme}://{parsed.netloc}"
+            ).rstrip("/")
 
     defaults = {
         "appName": settings.app_name,
@@ -660,7 +665,7 @@ def render_config_page(settings: Settings) -> str:
         "traktLoginAvailable": bool(
             settings.trakt_client_id and settings.trakt_client_secret
         ),
-        "traktCallbackOrigin": callback_origin,
+        "traktCallbackOrigin": resolved_callback_origin,
     }
     defaults_json = json.dumps(defaults).replace("</", "<\\/")
 
