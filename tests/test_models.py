@@ -64,3 +64,10 @@ def test_catalog_item_uses_tmdb_id_when_other_ids_missing() -> None:
     assert stub["tmdbId"] == 12345
     assert stub["tmdb_id"] == 12345
     assert stub["name"] == "Example"
+
+
+def test_catalog_item_stub_falls_back_to_id_for_blank_title() -> None:
+    item = CatalogItem(title="  ", type="movie", imdb_id="tt7654321")
+    stub = item.to_catalog_stub("aiopicks-movie-demo", 0)
+    assert stub["id"] == "tt7654321"
+    assert stub["name"] == "tt7654321"

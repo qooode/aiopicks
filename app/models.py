@@ -35,6 +35,23 @@ class CatalogItem(BaseModel):
     maturity_rating: str | None = None
     providers: list[str] = Field(default_factory=list)
 
+    def display_title(self) -> str:
+        """Return a human-friendly title for preview cards."""
+
+        title = (self.title or "").strip()
+        if title:
+            return title
+
+        fallback_sources: list[str | int | None] = [
+            self.imdb_id,
+            f"Trakt {self.trakt_id}" if self.trakt_id else None,
+            f"TMDb {self.tmdb_id}" if self.tmdb_id else None,
+        ]
+        for candidate in fallback_sources:
+            if candidate:
+                return str(candidate)
+        return "Untitled"
+
     def build_meta_id(self, catalog_id: str, index: int) -> str:
         """Return the unique identifier used for catalog/meta lookups."""
 
@@ -43,7 +60,7 @@ class CatalogItem(BaseModel):
         )
         if not base_id and self.tmdb_id:
             base_id = f"tmdb:{self.tmdb_id}"
-        return ensure_unique_meta_id(base_id, f"{catalog_id}-{self.title}", index)
+        return ensure_unique_meta_id(base_id, f"{catalog_id}-{self.display_title()}", index)
 
     def to_catalog_stub(self, catalog_id: str, index: int) -> dict[str, object]:
         """Return a Stremio-compatible meta object for catalog listings."""
@@ -51,7 +68,7 @@ class CatalogItem(BaseModel):
         meta: dict[str, object] = {
             "id": self.build_meta_id(catalog_id, index),
             "type": self.type,
-            "name": self.title,
+            "name": self.display_title(),
         }
 
         if self.imdb_id:
