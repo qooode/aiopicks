@@ -265,9 +265,11 @@ CONFIG_TEMPLATE = dedent(
                     </select>
                 </div>
                 <div class="actions">
-                    <button id="copy-default-manifest" type="button">Copy public manifest</button>
+                    <button id="prepare-profile" type="button">Generate catalogs</button>
                     <button id="copy-configured-manifest" type="button" class="secondary">Copy configured manifest</button>
+                    <button id="copy-default-manifest" type="button" class="secondary">Copy public manifest</button>
                 </div>
+                <div class="status" id="manifest-status"></div>
                 <p class="muted" id="copy-message"></p>
                 <div class="preview" id="manifest-preview"></div>
             </section>
@@ -284,10 +286,12 @@ CONFIG_TEMPLATE = dedent(
             const catalogValue = document.getElementById('catalog-count-value');
             const refreshSelect = document.getElementById('config-refresh-interval');
             const cacheSelect = document.getElementById('config-cache-ttl');
+            const prepareProfileButton = document.getElementById('prepare-profile');
             const copyDefaultManifest = document.getElementById('copy-default-manifest');
             const copyConfiguredManifest = document.getElementById('copy-configured-manifest');
             const manifestPreview = document.getElementById('manifest-preview');
             const copyMessage = document.getElementById('copy-message');
+            const manifestStatus = document.getElementById('manifest-status');
             const manifestLock = document.getElementById('manifest-lock');
 
             const traktLoginButton = document.getElementById('trakt-login');
@@ -304,6 +308,9 @@ CONFIG_TEMPLATE = dedent(
             const traktAuth = { accessToken: '', refreshToken: '' };
             let traktPending = false;
             let copyTimeout = null;
+            let preparePending = false;
+            let profileStatus = null;
+            let statusPollTimer = null;
 
             openrouterModel.value = defaults.openrouterModel || '';
             catalogSlider.value = defaults.catalogCount || catalogSlider.min || 1;
@@ -323,19 +330,35 @@ CONFIG_TEMPLATE = dedent(
             }
             refreshTraktMessaging();
             updateManifestPreview();
+            updateManifestUi();
+            updateManifestStatus();
+            void fetchProfileStatus({ useConfig: true, silent: true }).then((status) => {
+                if (status && status.refreshing) {
+                    scheduleStatusPoll();
+                }
+            });
 
             catalogSlider.addEventListener('input', () => {
                 catalogValue.textContent = catalogSlider.value;
+                markProfileDirty();
                 updateManifestPreview();
             });
-            openrouterModel.addEventListener('input', updateManifestPreview);
-            openrouterKey.addEventListener('input', updateManifestPreview);
+            openrouterModel.addEventListener('input', () => {
+                markProfileDirty();
+                updateManifestPreview();
+            });
+            openrouterKey.addEventListener('input', () => {
+                markProfileDirty();
+                updateManifestPreview();
+            });
             refreshSelect.addEventListener('change', () => {
                 ensureOption(refreshSelect, refreshSelect.value, formatSeconds(Number(refreshSelect.value)));
+                markProfileDirty();
                 updateManifestPreview();
             });
             cacheSelect.addEventListener('change', () => {
                 ensureOption(cacheSelect, cacheSelect.value, formatSeconds(Number(cacheSelect.value)));
+                markProfileDirty();
                 updateManifestPreview();
             });
 
@@ -345,9 +368,20 @@ CONFIG_TEMPLATE = dedent(
             });
 
             copyConfiguredManifest.addEventListener('click', async () => {
+                if (!isProfileReady()) {
+                    setCopyMessage('Generate catalogs before copying your manifest URL.');
+                    return;
+                }
                 const url = buildConfiguredUrl();
                 await copyToClipboard(url);
                 setCopyMessage('Configured manifest URL copied. Install it in Stremio to use your settings.');
+            });
+
+            prepareProfileButton.addEventListener('click', () => {
+                if (preparePending) {
+                    return;
+                }
+                startProfilePreparation();
             });
 
             traktLoginButton.addEventListener('click', async () => {
@@ -498,6 +532,7 @@ CONFIG_TEMPLATE = dedent(
                 if (traktBroadcastChannel) {
                     traktBroadcastChannel.close();
                 }
+                stopStatusPolling();
             });
 
             function setCopyMessage(message) {
@@ -512,21 +547,246 @@ CONFIG_TEMPLATE = dedent(
                 }
             }
 
+            function setManifestStatus(message, variant) {
+                manifestStatus.textContent = message || '';
+                if (variant === 'success') {
+                    manifestStatus.classList.add('success');
+                    manifestStatus.classList.remove('error');
+                } else if (variant === 'error') {
+                    manifestStatus.classList.add('error');
+                    manifestStatus.classList.remove('success');
+                } else {
+                    manifestStatus.classList.remove('success');
+                    manifestStatus.classList.remove('error');
+                }
+            }
+
+            function updateManifestStatus() {
+                if (preparePending) {
+                    setManifestStatus('Generating catalogs… this typically takes under a minute.');
+                    return;
+                }
+                if (!profileStatus) {
+                    setManifestStatus('Adjust the settings and click “Generate catalogs” to warm your manifest URL.');
+                    return;
+                }
+                if (profileStatus.refreshing) {
+                    setManifestStatus('Crunching fresh picks in the background… hang tight.');
+                    return;
+                }
+                if (!profileStatus.hasCatalogs) {
+                    setManifestStatus('No catalogs available yet—run “Generate catalogs” to get started.', 'error');
+                    return;
+                }
+                let message = 'Catalogs ready to copy.';
+                if (profileStatus.lastRefreshedAt) {
+                    const refreshedDate = new Date(profileStatus.lastRefreshedAt);
+                    if (!Number.isNaN(refreshedDate.getTime())) {
+                        message = `Catalogs ready. Last updated ${refreshedDate.toLocaleString()}.`;
+                    }
+                }
+                if (profileStatus.needsRefresh) {
+                    message += ' A background refresh is queued.';
+                }
+                setManifestStatus(message, 'success');
+            }
+
+            function isProfileReady() {
+                return Boolean(profileStatus && profileStatus.ready && profileStatus.hasCatalogs);
+            }
+
+            function stopStatusPolling() {
+                if (statusPollTimer) {
+                    clearTimeout(statusPollTimer);
+                    statusPollTimer = null;
+                }
+            }
+
+            function markProfileDirty() {
+                stopStatusPolling();
+                profileStatus = null;
+                updateManifestStatus();
+                updateManifestUi();
+            }
+
+            function updateManifestUi() {
+                const traktLocked = traktLoginAvailable && !traktAuth.accessToken;
+                prepareProfileButton.disabled = traktLocked || preparePending;
+                copyConfiguredManifest.disabled = traktLocked || !isProfileReady();
+                manifestLock.classList.toggle('hidden', !traktLoginAvailable || Boolean(traktAuth.accessToken));
+            }
+
+            function scheduleStatusPoll(delay = 4000) {
+                stopStatusPolling();
+                statusPollTimer = setTimeout(async () => {
+                    statusPollTimer = null;
+                    const status = await fetchProfileStatus({ silent: true });
+                    if (status && status.refreshing) {
+                        const nextDelay = Math.min(Math.round(delay * 1.25), 15000);
+                        scheduleStatusPoll(nextDelay);
+                    }
+                }, delay);
+            }
+
+            function normalizeProfileStatus(raw) {
+                if (!raw || typeof raw !== 'object') {
+                    return null;
+                }
+                const profileId = typeof raw.profileId === 'string' ? raw.profileId.trim() : '';
+                if (!profileId) {
+                    return null;
+                }
+                return {
+                    profileId,
+                    hasCatalogs: Boolean(raw.hasCatalogs),
+                    needsRefresh: Boolean(raw.needsRefresh),
+                    refreshing: Boolean(raw.refreshing),
+                    ready: Boolean(raw.ready),
+                    lastRefreshedAt: raw.lastRefreshedAt || '',
+                    nextRefreshAt: raw.nextRefreshAt || '',
+                };
+            }
+
+            function collectManifestSettings() {
+                return {
+                    openrouterKey: openrouterKey.value.trim(),
+                    openrouterModel: openrouterModel.value.trim(),
+                    catalogCount: catalogSlider.value,
+                    refreshInterval: refreshSelect.value,
+                    cacheTtl: cacheSelect.value,
+                    traktAccessToken: traktAuth.accessToken,
+                };
+            }
+
+            function buildManifestPayload(options = {}) {
+                const { includeProfileId = true } = options;
+                const payload = {};
+                const settings = collectManifestSettings();
+                if (includeProfileId && profileStatus && profileStatus.profileId) {
+                    payload.profileId = profileStatus.profileId;
+                }
+                if (settings.openrouterKey) payload.openrouterKey = settings.openrouterKey;
+                if (settings.openrouterModel) payload.openrouterModel = settings.openrouterModel;
+                if (settings.catalogCount) payload.catalogCount = Number(settings.catalogCount);
+                if (settings.refreshInterval) payload.refreshInterval = Number(settings.refreshInterval);
+                if (settings.cacheTtl) payload.cacheTtl = Number(settings.cacheTtl);
+                if (settings.traktAccessToken) payload.traktAccessToken = settings.traktAccessToken;
+                return payload;
+            }
+
+            function buildProfileQuery(options = {}) {
+                const { includeProfileId = true, includeConfig = false } = options;
+                const params = new URLSearchParams();
+                if (includeProfileId && profileStatus && profileStatus.profileId) {
+                    params.set('profileId', profileStatus.profileId);
+                }
+                if (includeConfig) {
+                    const settings = collectManifestSettings();
+                    Object.entries(settings).forEach(([key, value]) => {
+                        if (value) {
+                            params.set(key, value);
+                        }
+                    });
+                }
+                const hasKeys = [...params.keys()].length > 0;
+                if (!hasKeys && !includeConfig) {
+                    return null;
+                }
+                return params;
+            }
+
+            async function startProfilePreparation() {
+                preparePending = true;
+                stopStatusPolling();
+                updateManifestUi();
+                updateManifestStatus();
+                try {
+                    const payload = buildManifestPayload({ includeProfileId: true });
+                    payload.waitForCompletion = false;
+                    payload.force = true;
+                    const response = await fetch('/api/profile/prepare', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        setManifestStatus(resolveErrorMessage(data) || 'Could not start catalog generation.', 'error');
+                        return;
+                    }
+                    const normalized = normalizeProfileStatus(data);
+                    if (!normalized) {
+                        setManifestStatus('Unexpected response while starting catalog generation.', 'error');
+                        return;
+                    }
+                    profileStatus = normalized;
+                    updateManifestPreview();
+                    updateManifestUi();
+                    updateManifestStatus();
+                    if (profileStatus.refreshing) {
+                        scheduleStatusPoll();
+                    }
+                } catch (error) {
+                    console.error(error);
+                    setManifestStatus('Could not reach the server to generate catalogs.', 'error');
+                } finally {
+                    preparePending = false;
+                    updateManifestUi();
+                    updateManifestStatus();
+                }
+            }
+
+            async function fetchProfileStatus(options = {}) {
+                const { silent = false, useConfig = false } = options;
+                const params = buildProfileQuery({
+                    includeProfileId: !useConfig,
+                    includeConfig: useConfig,
+                });
+                if (!params) {
+                    return null;
+                }
+                try {
+                    const response = await fetch(`/api/profile/status?${params.toString()}`);
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        if (!silent) {
+                            setManifestStatus(resolveErrorMessage(data) || 'Unable to fetch profile status.', 'error');
+                        }
+                        return null;
+                    }
+                    const normalized = normalizeProfileStatus(data);
+                    if (!normalized) {
+                        return null;
+                    }
+                    profileStatus = normalized;
+                    updateManifestPreview();
+                    updateManifestUi();
+                    updateManifestStatus();
+                    return profileStatus;
+                } catch (error) {
+                    console.error(error);
+                    if (!silent) {
+                        setManifestStatus('Unable to reach the server for status updates.', 'error');
+                    }
+                    return null;
+                }
+            }
+
             function buildConfiguredUrl() {
                 const url = new URL(baseManifestUrl);
                 const params = new URLSearchParams();
-                const key = openrouterKey.value.trim();
-                if (key) params.set('openrouterKey', key);
-                const model = openrouterModel.value.trim();
-                if (model) params.set('openrouterModel', model);
-                const count = catalogSlider.value;
-                if (count) params.set('catalogCount', count);
-                const refresh = refreshSelect.value;
-                if (refresh) params.set('refreshInterval', refresh);
-                const cache = cacheSelect.value;
-                if (cache) params.set('cacheTtl', cache);
-                if (traktAuth.accessToken) {
-                    params.set('traktAccessToken', traktAuth.accessToken);
+                const settings = collectManifestSettings();
+                if (profileStatus && profileStatus.profileId) {
+                    params.set('profile', profileStatus.profileId);
+                } else if (settings.openrouterKey) {
+                    params.set('openrouterKey', settings.openrouterKey);
+                }
+                if (settings.openrouterModel) params.set('openrouterModel', settings.openrouterModel);
+                if (settings.catalogCount) params.set('catalogCount', settings.catalogCount);
+                if (settings.refreshInterval) params.set('refreshInterval', settings.refreshInterval);
+                if (settings.cacheTtl) params.set('cacheTtl', settings.cacheTtl);
+                if (settings.traktAccessToken) {
+                    params.set('traktAccessToken', settings.traktAccessToken);
                 }
                 url.search = params.toString();
                 return url.toString();
@@ -534,8 +794,6 @@ CONFIG_TEMPLATE = dedent(
 
             function updateManifestPreview() {
                 manifestPreview.textContent = buildConfiguredUrl();
-                copyConfiguredManifest.disabled = traktLoginAvailable && !traktAuth.accessToken;
-                manifestLock.classList.toggle('hidden', !traktLoginAvailable || Boolean(traktAuth.accessToken));
             }
 
             async function copyToClipboard(value) {
@@ -617,9 +875,14 @@ CONFIG_TEMPLATE = dedent(
             function applyTraktTokens(tokens, options = {}) {
                 const access = ((tokens && (tokens.access_token || tokens.accessToken)) || '').trim();
                 const refresh = ((tokens && (tokens.refresh_token || tokens.refreshToken)) || '').trim();
+                const previousAccess = traktAuth.accessToken;
+                const previousRefresh = traktAuth.refreshToken;
                 traktAuth.accessToken = access;
                 traktAuth.refreshToken = refresh;
                 persistTraktTokens(access ? { access_token: access, refresh_token: refresh } : null);
+                if (previousAccess !== access || previousRefresh !== refresh) {
+                    markProfileDirty();
+                }
                 updateTraktUi();
                 if (!options.silent) {
                     if (access) {
@@ -630,6 +893,7 @@ CONFIG_TEMPLATE = dedent(
                     }
                 }
                 updateManifestPreview();
+                updateManifestUi();
             }
 
             function persistTraktTokens(tokens) {

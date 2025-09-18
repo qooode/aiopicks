@@ -169,6 +169,63 @@ def register_routes(fastapi_app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse({"meta": meta_payload})
 
+    @fastapi_app.post("/api/profile/prepare")
+    async def prepare_profile_endpoint(request: Request) -> JSONResponse:
+        service = get_catalog_service(fastapi_app)
+        try:
+            payload = await request.json()
+        except json.JSONDecodeError:
+            payload = {}
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Invalid payload")
+
+        def _coerce_bool(value: object) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.lower() in {"1", "true", "yes", "on"}
+            if isinstance(value, (int, float)):
+                return bool(value)
+            return False
+
+        try:
+            config = ManifestConfig.model_validate(payload)
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail=exc.errors()) from exc
+
+        force_flag = _coerce_bool(payload.get("force"))
+        wait_for_completion = _coerce_bool(payload.get("waitForCompletion", False))
+        context = await service.resolve_profile(config)
+        state = context.state
+        status = await service.get_profile_status(state.id)
+        if status is None:
+            raise HTTPException(status_code=404, detail="Profile could not be resolved")
+
+        should_refresh = force_flag or context.force_refresh or status.needs_refresh
+        if should_refresh:
+            if wait_for_completion:
+                await service.ensure_catalogs(state, force=True, wait=True)
+            else:
+                service.request_refresh(state, force=True)
+            status = await service.get_profile_status(state.id)
+            if status is None:
+                raise HTTPException(status_code=404, detail="Profile not found after refresh")
+
+        return JSONResponse(status.to_payload())
+
+    @fastapi_app.get("/api/profile/status")
+    async def profile_status_endpoint(request: Request) -> JSONResponse:
+        service = get_catalog_service(fastapi_app)
+        try:
+            config = ManifestConfig.from_query(request.query_params)
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail=exc.errors()) from exc
+        profile_id = service.determine_profile_id(config)
+        status = await service.get_profile_status(profile_id)
+        if status is None:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        return JSONResponse(status.to_payload())
+
     @fastapi_app.post("/api/trakt/login-url")
     async def trakt_login_url(request: Request) -> dict[str, str]:
         if not (settings.trakt_client_id and settings.trakt_client_secret):
