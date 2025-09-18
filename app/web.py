@@ -777,7 +777,8 @@ CONFIG_TEMPLATE = dedent(
                 const params = new URLSearchParams();
                 const settings = collectManifestSettings();
                 if (profileStatus && profileStatus.profileId) {
-                    params.set('profile', profileStatus.profileId);
+                    const encodedProfileId = encodeURIComponent(profileStatus.profileId);
+                    url.pathname = `/profiles/${encodedProfileId}/manifest.json`;
                 } else if (settings.openrouterKey) {
                     params.set('openrouterKey', settings.openrouterKey);
                 }

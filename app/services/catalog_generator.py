@@ -67,7 +67,16 @@ class ManifestConfig(BaseModel):
 
     @classmethod
     def from_query(cls, params: Mapping[str, str]) -> "ManifestConfig":
-        return cls.model_validate(dict(params))
+        return cls.from_request(params)
+
+    @classmethod
+    def from_request(
+        cls, params: Mapping[str, str], *, profile_id: str | None = None
+    ) -> "ManifestConfig":
+        payload = dict(params)
+        if profile_id is not None:
+            payload["profile"] = profile_id
+        return cls.model_validate(payload)
 
     @field_validator("catalog_count", "refresh_interval", "response_cache", mode="before")
     @classmethod

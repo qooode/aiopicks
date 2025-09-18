@@ -95,22 +95,14 @@ def get_catalog_service(app: FastAPI) -> CatalogService:
 
 
 def register_routes(fastapi_app: FastAPI) -> None:
-    @fastapi_app.get("/healthz")
-    async def healthcheck() -> dict[str, str]:
-        return {"status": "ok"}
-
-    @fastapi_app.get("/config", response_class=HTMLResponse)
-    async def config_page(request: Request) -> HTMLResponse:
-        callback_origin, _ = _resolve_trakt_redirect(request)
-        return HTMLResponse(
-            render_config_page(settings, callback_origin=callback_origin)
-        )
-
-    @fastapi_app.get("/manifest.json")
-    async def manifest(request: Request) -> dict[str, Any]:
+    async def _manifest_endpoint(
+        request: Request, *, profile_id: str | None = None
+    ) -> dict[str, Any]:
         service = get_catalog_service(fastapi_app)
         try:
-            config = ManifestConfig.from_query(request.query_params)
+            config = ManifestConfig.from_request(
+                request.query_params, profile_id=profile_id
+            )
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=exc.errors()) from exc
 
@@ -133,32 +125,46 @@ def register_routes(fastapi_app: FastAPI) -> None:
             "idPrefixes": ["aiopicks", "tt", "trakt"],
         }
 
-    @fastapi_app.get("/catalog/{content_type}/{catalog_id}.json")
-    async def catalog(
-        request: Request, content_type: str, catalog_id: str
+    async def _catalog_endpoint(
+        request: Request,
+        content_type: str,
+        catalog_id: str,
+        *,
+        profile_id: str | None = None,
     ) -> JSONResponse:
         if content_type not in {"movie", "series"}:
             raise HTTPException(status_code=400, detail="Unsupported content type")
         service = get_catalog_service(fastapi_app)
         try:
-            config = ManifestConfig.from_query(request.query_params)
+            config = ManifestConfig.from_request(
+                request.query_params, profile_id=profile_id
+            )
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=exc.errors()) from exc
         try:
-            payload = await service.get_catalog_payload(config, content_type, catalog_id)
+            payload = await service.get_catalog_payload(
+                config, content_type, catalog_id
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse(payload)
 
-    @fastapi_app.get("/meta/{content_type}/{meta_id}.json")
-    async def meta(request: Request, content_type: str, meta_id: str) -> JSONResponse:
+    async def _meta_endpoint(
+        request: Request,
+        content_type: str,
+        meta_id: str,
+        *,
+        profile_id: str | None = None,
+    ) -> JSONResponse:
         if content_type not in {"movie", "series"}:
             raise HTTPException(status_code=400, detail="Unsupported content type")
         service = get_catalog_service(fastapi_app)
         try:
-            config = ManifestConfig.from_query(request.query_params)
+            config = ManifestConfig.from_request(
+                request.query_params, profile_id=profile_id
+            )
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=exc.errors()) from exc
         try:
@@ -168,6 +174,55 @@ def register_routes(fastapi_app: FastAPI) -> None:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse({"meta": meta_payload})
+
+    @fastapi_app.get("/healthz")
+    async def healthcheck() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @fastapi_app.get("/config", response_class=HTMLResponse)
+    async def config_page(request: Request) -> HTMLResponse:
+        callback_origin, _ = _resolve_trakt_redirect(request)
+        return HTMLResponse(
+            render_config_page(settings, callback_origin=callback_origin)
+        )
+
+    @fastapi_app.get("/manifest.json")
+    async def manifest(request: Request) -> dict[str, Any]:
+        return await _manifest_endpoint(request)
+
+    @fastapi_app.get("/profiles/{profile_id}/manifest.json")
+    async def manifest_with_profile(
+        request: Request, profile_id: str
+    ) -> dict[str, Any]:
+        return await _manifest_endpoint(request, profile_id=profile_id)
+
+    @fastapi_app.get("/catalog/{content_type}/{catalog_id}.json")
+    async def catalog(
+        request: Request, content_type: str, catalog_id: str
+    ) -> JSONResponse:
+        return await _catalog_endpoint(request, content_type, catalog_id)
+
+    @fastapi_app.get(
+        "/profiles/{profile_id}/catalog/{content_type}/{catalog_id}.json"
+    )
+    async def catalog_with_profile(
+        request: Request, profile_id: str, content_type: str, catalog_id: str
+    ) -> JSONResponse:
+        return await _catalog_endpoint(
+            request, content_type, catalog_id, profile_id=profile_id
+        )
+
+    @fastapi_app.get("/meta/{content_type}/{meta_id}.json")
+    async def meta(request: Request, content_type: str, meta_id: str) -> JSONResponse:
+        return await _meta_endpoint(request, content_type, meta_id)
+
+    @fastapi_app.get("/profiles/{profile_id}/meta/{content_type}/{meta_id}.json")
+    async def meta_with_profile(
+        request: Request, profile_id: str, content_type: str, meta_id: str
+    ) -> JSONResponse:
+        return await _meta_endpoint(
+            request, content_type, meta_id, profile_id=profile_id
+        )
 
     @fastapi_app.post("/api/profile/prepare")
     async def prepare_profile_endpoint(request: Request) -> JSONResponse:
