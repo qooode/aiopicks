@@ -120,7 +120,7 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 "Flash Lite model and your Trakt history."
             ),
             "catalogs": catalogs,
-            "resources": ["catalog", "meta"],
+            "resources": ["catalog"],
             "types": ["movie", "series"],
             "idPrefixes": ["aiopicks", "tt", "trakt"],
         }
