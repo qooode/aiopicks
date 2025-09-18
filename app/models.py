@@ -53,25 +53,6 @@ class CatalogItem(BaseModel):
             "type": self.type,
         }
 
-        if self.title:
-            meta["name"] = self.title
-        if self.overview:
-            meta["description"] = self.overview
-        if self.poster:
-            meta["poster"] = str(self.poster)
-        if self.background:
-            meta["background"] = str(self.background)
-        if self.year:
-            meta["year"] = self.year
-            meta["releaseInfo"] = str(self.year)
-        if self.weight is not None:
-            meta["popularity"] = self.weight
-        if self.runtime_minutes:
-            meta["runtime"] = self.runtime_minutes
-        if self.genres:
-            meta["genres"] = list(self.genres)
-        if self.maturity_rating:
-            meta["maturityRating"] = self.maturity_rating
         if self.imdb_id:
             meta["imdbId"] = self.imdb_id
         if self.trakt_id:

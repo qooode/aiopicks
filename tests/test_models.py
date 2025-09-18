@@ -23,13 +23,11 @@ def test_catalog_from_ai_payload_generates_ids():
 
     assert catalog.id.startswith("aiopicks-movie")
     stub = catalog.items[0].to_catalog_stub(catalog.id, 0)
-    assert stub["id"] == "tt0359950"
-    assert stub["type"] == "movie"
-    assert stub["name"] == "The Secret Life of Walter Mitty"
-    assert stub["description"] == "A daydreamer's journey"
-    assert stub["poster"] == "https://example.com/poster.jpg"
-    assert stub["imdbId"] == "tt0359950"
-    assert stub["releaseInfo"] == "2013"
+    assert stub == {
+        "id": "tt0359950",
+        "type": "movie",
+        "imdbId": "tt0359950",
+    }
 
 
 def test_catalog_bundle_from_ai_response_handles_missing_sections():
