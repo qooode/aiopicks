@@ -1,4 +1,4 @@
-from app.models import Catalog, CatalogBundle
+from app.models import Catalog, CatalogBundle, CatalogItem
 
 
 def test_catalog_from_ai_payload_generates_ids():
@@ -47,3 +47,9 @@ def test_catalog_bundle_from_ai_response_handles_missing_sections():
     assert len(bundle.movie_catalogs) == 1
     assert bundle.movie_catalogs[0].title == "Chill Friday"
     assert bundle.series_catalogs == []
+
+
+def test_catalog_item_uses_tmdb_id_when_other_ids_missing() -> None:
+    item = CatalogItem(title="Example", type="movie", tmdb_id=12345)
+    meta = item.to_meta("aiopicks-movie-demo", 0)
+    assert meta["id"] == "tmdb:12345"

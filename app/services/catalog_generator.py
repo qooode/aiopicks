@@ -20,6 +20,7 @@ from ..db_models import CatalogRecord, Profile
 from ..models import Catalog, CatalogBundle, CatalogItem
 from ..utils import slugify
 from .openrouter import OpenRouterClient
+from .tmdb import TMDBClient
 from .trakt import TraktClient
 
 logger = logging.getLogger(__name__)
@@ -172,11 +173,13 @@ class CatalogService:
         trakt_client: TraktClient,
         openrouter_client: OpenRouterClient,
         session_factory: async_sessionmaker[AsyncSession],
+        tmdb_client: TMDBClient | None = None,
     ):
         self._settings = settings
         self._trakt = trakt_client
         self._ai = openrouter_client
         self._session_factory = session_factory
+        self._tmdb = tmdb_client
         self._locks: dict[str, asyncio.Lock] = {}
         self._refresh_task: asyncio.Task[None] | None = None
         self._refresh_poll_seconds = 60
@@ -409,6 +412,7 @@ class CatalogService:
                 model=state.openrouter_model,
             )
             catalogs = self._bundle_to_dict(bundle)
+            catalogs = await self._enrich_catalogs(catalogs)
             if not (catalogs["movie"] or catalogs["series"]):
                 logger.warning(
                     "AI returned an empty catalog bundle for profile %s; falling back to history",
@@ -696,6 +700,35 @@ class CatalogService:
             "movie": {catalog.id: catalog for catalog in bundle.movie_catalogs},
             "series": {catalog.id: catalog for catalog in bundle.series_catalogs},
         }
+
+    async def _enrich_catalogs(
+        self, catalogs: dict[str, dict[str, Catalog]]
+    ) -> dict[str, dict[str, Catalog]]:
+        if self._tmdb is None:
+            return catalogs
+
+        enriched: dict[str, dict[str, Catalog]] = {}
+        for content_type, catalog_map in catalogs.items():
+            updated_catalogs: dict[str, Catalog] = {}
+            for catalog_id, catalog in catalog_map.items():
+                updated_catalogs[catalog_id] = await self._enrich_catalog(catalog)
+            enriched[content_type] = updated_catalogs
+        return enriched
+
+    async def _enrich_catalog(self, catalog: Catalog) -> Catalog:
+        if self._tmdb is None:
+            return catalog
+
+        updated_items: list[CatalogItem] = []
+        changed = False
+        for item in catalog.items:
+            enriched = await self._tmdb.enrich_item(item)
+            if enriched is not item:
+                changed = True
+            updated_items.append(enriched)
+        if not changed:
+            return catalog
+        return catalog.model_copy(update={"items": updated_items})
 
     def _build_summary(
         self,

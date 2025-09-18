@@ -188,3 +188,46 @@ def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:
         await database.dispose()
 
     asyncio.run(runner())
+
+
+class StubTMDBClient:
+    def __init__(self, *, tmdb_id: int = 555555) -> None:
+        self.tmdb_id = tmdb_id
+        self.calls: list[str] = []
+
+    async def enrich_item(self, item: CatalogItem) -> CatalogItem:
+        self.calls.append(item.title)
+        if item.tmdb_id:
+            return item
+        return item.model_copy(update={"tmdb_id": self.tmdb_id})
+
+
+def test_catalog_enrichment_uses_tmdb_client() -> None:
+    """Catalog items gain TMDB identifiers when available."""
+
+    async def runner() -> None:
+        settings = Settings(_env_file=None)
+        tmdb = StubTMDBClient()
+        service = CatalogService(
+            settings,
+            cast(TraktClient, object()),
+            cast(OpenRouterClient, object()),
+            cast(Database, object()),
+            tmdb_client=tmdb,
+        )
+
+        catalog = Catalog(
+            id="aiopicks-movie-demo",
+            type="movie",
+            title="Demo",
+            description=None,
+            seed="seed",
+            items=[CatalogItem(title="Example", type="movie")],
+            generated_at=datetime.utcnow(),
+        )
+
+        enriched = await service._enrich_catalog(catalog)
+        assert enriched.items[0].tmdb_id == tmdb.tmdb_id
+        assert tmdb.calls == ["Example"]
+
+    asyncio.run(runner())

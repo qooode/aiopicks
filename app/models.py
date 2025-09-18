@@ -38,7 +38,11 @@ class CatalogItem(BaseModel):
     def build_meta_id(self, catalog_id: str, index: int) -> str:
         """Return the unique identifier used for catalog/meta lookups."""
 
-        base_id = self.imdb_id or (f"trakt:{self.trakt_id}" if self.trakt_id else "")
+        base_id = self.imdb_id or (
+            f"trakt:{self.trakt_id}" if self.trakt_id else ""
+        )
+        if not base_id and self.tmdb_id:
+            base_id = f"tmdb:{self.tmdb_id}"
         return ensure_unique_meta_id(base_id, f"{catalog_id}-{self.title}", index)
 
     def to_catalog_stub(self, catalog_id: str, index: int) -> dict[str, object]:
