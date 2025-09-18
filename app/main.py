@@ -100,8 +100,11 @@ def register_routes(fastapi_app: FastAPI) -> None:
         return {"status": "ok"}
 
     @fastapi_app.get("/config", response_class=HTMLResponse)
-    async def config_page() -> HTMLResponse:
-        return HTMLResponse(render_config_page(settings))
+    async def config_page(request: Request) -> HTMLResponse:
+        callback_origin, _ = _resolve_trakt_redirect(request)
+        return HTMLResponse(
+            render_config_page(settings, callback_origin=callback_origin)
+        )
 
     @fastapi_app.get("/manifest.json")
     async def manifest(request: Request) -> dict[str, Any]:
@@ -215,6 +218,8 @@ def register_routes(fastapi_app: FastAPI) -> None:
         error_description: str | None = None,
     ) -> HTMLResponse:
         _prune_expired_states(fastapi_app)
+        default_origin, default_redirect = _resolve_trakt_redirect(request)
+
         if not state:
             payload = {
                 "status": "error",
@@ -222,12 +227,11 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 "error_description": "State parameter was not returned by Trakt.",
             }
             return HTMLResponse(
-                _render_oauth_popup(str(request.base_url).rstrip("/"), payload),
+                _render_oauth_popup(default_origin, payload),
                 status_code=400,
             )
 
         state_data = fastapi_app.state.trakt_oauth_states.pop(state, None)
-        default_origin, default_redirect = _resolve_trakt_redirect(request)
         origin = (state_data or {}).get("origin") or default_origin
         redirect_uri = (state_data or {}).get("redirect_uri") or default_redirect
 
