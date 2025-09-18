@@ -46,12 +46,40 @@ class CatalogItem(BaseModel):
         return ensure_unique_meta_id(base_id, f"{catalog_id}-{self.title}", index)
 
     def to_catalog_stub(self, catalog_id: str, index: int) -> dict[str, object]:
-        """Return a minimal meta entry for catalog listings."""
+        """Return a Stremio-compatible meta object for catalog listings."""
 
-        return {
+        meta: dict[str, object] = {
             "id": self.build_meta_id(catalog_id, index),
             "type": self.type,
         }
+
+        if self.title:
+            meta["name"] = self.title
+        if self.overview:
+            meta["description"] = self.overview
+        if self.poster:
+            meta["poster"] = str(self.poster)
+        if self.background:
+            meta["background"] = str(self.background)
+        if self.year:
+            meta["year"] = self.year
+            meta["releaseInfo"] = str(self.year)
+        if self.weight is not None:
+            meta["popularity"] = self.weight
+        if self.runtime_minutes:
+            meta["runtime"] = self.runtime_minutes
+        if self.genres:
+            meta["genres"] = list(self.genres)
+        if self.maturity_rating:
+            meta["maturityRating"] = self.maturity_rating
+        if self.imdb_id:
+            meta["imdbId"] = self.imdb_id
+        if self.trakt_id:
+            meta["traktId"] = self.trakt_id
+        if self.tmdb_id:
+            meta["tmdbId"] = self.tmdb_id
+
+        return meta
 
 
 class Catalog(BaseModel):

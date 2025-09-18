@@ -25,6 +25,11 @@ def test_catalog_from_ai_payload_generates_ids():
     stub = catalog.items[0].to_catalog_stub(catalog.id, 0)
     assert stub["id"] == "tt0359950"
     assert stub["type"] == "movie"
+    assert stub["name"] == "The Secret Life of Walter Mitty"
+    assert stub["description"] == "A daydreamer's journey"
+    assert stub["poster"] == "https://example.com/poster.jpg"
+    assert stub["imdbId"] == "tt0359950"
+    assert stub["releaseInfo"] == "2013"
 
 
 def test_catalog_bundle_from_ai_response_handles_missing_sections():
@@ -56,3 +61,4 @@ def test_catalog_item_uses_tmdb_id_when_other_ids_missing() -> None:
     stub = item.to_catalog_stub("aiopicks-movie-demo", 0)
     assert stub["id"] == "tmdb:12345"
     assert stub["type"] == "movie"
+    assert stub["tmdbId"] == 12345
