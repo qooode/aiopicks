@@ -51,14 +51,17 @@ class CatalogItem(BaseModel):
         meta: dict[str, object] = {
             "id": self.build_meta_id(catalog_id, index),
             "type": self.type,
+            "name": self.title,
         }
 
         if self.imdb_id:
             meta["imdbId"] = self.imdb_id
+            meta["imdb_id"] = self.imdb_id
         if self.trakt_id:
             meta["traktId"] = self.trakt_id
         if self.tmdb_id:
             meta["tmdbId"] = self.tmdb_id
+            meta["tmdb_id"] = self.tmdb_id
 
         return meta
 
@@ -119,6 +122,7 @@ class Catalog(BaseModel):
             "type": self.type,
             "id": self.id,
             "name": self.title,
+            "idProperty": "imdb_id",
             "extra": [],
         }
 
