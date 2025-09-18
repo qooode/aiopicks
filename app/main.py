@@ -183,8 +183,9 @@ def register_routes(fastapi_app: FastAPI) -> None:
         _prune_expired_states(fastapi_app)
         state = secrets.token_urlsafe(32)
         default_origin, redirect_uri = _resolve_trakt_redirect(request)
-        origin_header = request.headers.get("origin")
-        origin = (origin_header.rstrip("/")) if origin_header else default_origin
+        origin_header = _normalize_origin_header(request.headers.get("origin"))
+        referer_origin = _origin_from_url(request.headers.get("referer"))
+        origin = origin_header or referer_origin or default_origin
         fastapi_app.state.trakt_oauth_states[state] = {
             "origin": origin,
             "redirect_uri": redirect_uri,
@@ -369,6 +370,27 @@ def _first_forwarded_value(header_value: str | None) -> str | None:
     if not header_value:
         return None
     return header_value.split(",", 1)[0].strip()
+
+
+def _normalize_origin_header(origin_value: str | None) -> str | None:
+    if not origin_value:
+        return None
+    origin_value = origin_value.strip()
+    if not origin_value or origin_value.lower() == "null":
+        return None
+    return origin_value.rstrip("/")
+
+
+def _origin_from_url(url_value: str | None) -> str | None:
+    if not url_value:
+        return None
+    try:
+        parsed = urlparse(url_value)
+    except ValueError:
+        return None
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
 
 
 def _render_oauth_popup(target_origin: str, payload: dict[str, Any]) -> str:
