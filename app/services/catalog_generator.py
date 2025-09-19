@@ -444,17 +444,19 @@ class CatalogService:
             state.openrouter_model,
         )
 
-        movie_history_batch = await self._trakt.fetch_history(
-            "movies",
-            client_id=state.trakt_client_id,
-            access_token=state.trakt_access_token,
-            limit=state.trakt_history_limit,
-        )
-        show_history_batch = await self._trakt.fetch_history(
-            "shows",
-            client_id=state.trakt_client_id,
-            access_token=state.trakt_access_token,
-            limit=state.trakt_history_limit,
+        movie_history_batch, show_history_batch = await asyncio.gather(
+            self._trakt.fetch_history(
+                "movies",
+                client_id=state.trakt_client_id,
+                access_token=state.trakt_access_token,
+                limit=state.trakt_history_limit,
+            ),
+            self._trakt.fetch_history(
+                "shows",
+                client_id=state.trakt_client_id,
+                access_token=state.trakt_access_token,
+                limit=state.trakt_history_limit,
+            ),
         )
         movie_history = movie_history_batch.items
         show_history = show_history_batch.items
@@ -786,17 +788,19 @@ class CatalogService:
         if refreshed_at and datetime.utcnow() - refreshed_at < timedelta(hours=12):
             return state
 
-        movie_batch = await self._trakt.fetch_history(
-            "movies",
-            client_id=state.trakt_client_id,
-            access_token=state.trakt_access_token,
-            limit=1,
-        )
-        show_batch = await self._trakt.fetch_history(
-            "shows",
-            client_id=state.trakt_client_id,
-            access_token=state.trakt_access_token,
-            limit=1,
+        movie_batch, show_batch = await asyncio.gather(
+            self._trakt.fetch_history(
+                "movies",
+                client_id=state.trakt_client_id,
+                access_token=state.trakt_access_token,
+                limit=1,
+            ),
+            self._trakt.fetch_history(
+                "shows",
+                client_id=state.trakt_client_id,
+                access_token=state.trakt_access_token,
+                limit=1,
+            ),
         )
 
         movie_total, show_total, snapshot = await self._gather_trakt_history_metadata(
