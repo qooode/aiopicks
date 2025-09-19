@@ -77,6 +77,12 @@ class ManifestConfig(BaseModel):
         ge=300,
         validation_alias=AliasChoices("cacheTtl", "cacheTTL", "cacheSeconds"),
     )
+    trakt_history_limit: int | None = Field(
+        default=None,
+        ge=10,
+        le=2000,
+        validation_alias=AliasChoices("traktHistoryLimit", "historyLimit"),
+    )
     trakt_client_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("traktClientId", "traktClientID"),
@@ -112,6 +118,7 @@ class ManifestConfig(BaseModel):
         "catalog_item_count",
         "refresh_interval",
         "response_cache",
+        "trakt_history_limit",
         mode="before",
     )
     @classmethod
@@ -158,9 +165,13 @@ class ProfileState:
     catalog_item_count: int
     refresh_interval_seconds: int
     response_cache_seconds: int
+    trakt_history_limit: int
     next_refresh_at: datetime | None
     last_refreshed_at: datetime | None
     metadata_addon_url: str | None = None
+    trakt_movie_history_count: int = 0
+    trakt_show_history_count: int = 0
+    trakt_history_refreshed_at: datetime | None = None
 
 
 @dataclass
@@ -189,6 +200,16 @@ class ProfileStatus:
             "refreshIntervalSeconds": self.state.refresh_interval_seconds,
             "responseCacheSeconds": self.state.response_cache_seconds,
             "metadataAddon": self.state.metadata_addon_url,
+            "traktHistoryLimit": self.state.trakt_history_limit,
+            "traktHistory": {
+                "movies": self.state.trakt_movie_history_count,
+                "shows": self.state.trakt_show_history_count,
+                "refreshedAt": (
+                    self.state.trakt_history_refreshed_at.isoformat()
+                    if self.state.trakt_history_refreshed_at
+                    else None
+                ),
+            },
             "lastRefreshedAt": (
                 self.state.last_refreshed_at.isoformat() if self.state.last_refreshed_at else None
             ),
@@ -408,15 +429,30 @@ class CatalogService:
             state.openrouter_model,
         )
 
-        movie_history = await self._trakt.fetch_history(
+        movie_history_batch = await self._trakt.fetch_history(
             "movies",
             client_id=state.trakt_client_id,
             access_token=state.trakt_access_token,
+            limit=state.trakt_history_limit,
         )
-        show_history = await self._trakt.fetch_history(
+        show_history_batch = await self._trakt.fetch_history(
             "shows",
             client_id=state.trakt_client_id,
             access_token=state.trakt_access_token,
+            limit=state.trakt_history_limit,
+        )
+        movie_history = movie_history_batch.items
+        show_history = show_history_batch.items
+
+        await self._store_trakt_history_stats(
+            state,
+            history_limit=state.trakt_history_limit,
+            movie_total=(
+                movie_history_batch.total if movie_history_batch.fetched else None
+            ),
+            show_total=(
+                show_history_batch.total if show_history_batch.fetched else None
+            ),
         )
 
         summary = self._build_summary(
@@ -544,10 +580,114 @@ class CatalogService:
             ),
             refresh_interval_seconds=profile.refresh_interval_seconds,
             response_cache_seconds=profile.response_cache_seconds,
+            trakt_history_limit=getattr(
+                profile,
+                "trakt_history_limit",
+                self._settings.trakt_history_limit,
+            ),
             next_refresh_at=profile.next_refresh_at,
             last_refreshed_at=profile.last_refreshed_at,
             metadata_addon_url=getattr(profile, "metadata_addon_url", None),
+            trakt_movie_history_count=getattr(
+                profile, "trakt_movie_history_count", 0
+            ),
+            trakt_show_history_count=getattr(
+                profile, "trakt_show_history_count", 0
+            ),
+            trakt_history_refreshed_at=getattr(
+                profile, "trakt_history_refreshed_at", None
+            ),
         )
+
+    async def _store_trakt_history_stats(
+        self,
+        state: ProfileState,
+        *,
+        history_limit: int,
+        movie_total: int | None,
+        show_total: int | None,
+    ) -> None:
+        """Persist Trakt history counts and keep the in-memory state fresh."""
+
+        state.trakt_history_limit = history_limit
+        timestamp: datetime | None = None
+        if movie_total is not None:
+            state.trakt_movie_history_count = movie_total
+            timestamp = datetime.utcnow()
+        if show_total is not None:
+            state.trakt_show_history_count = show_total
+            if timestamp is None:
+                timestamp = datetime.utcnow()
+        if timestamp is not None:
+            state.trakt_history_refreshed_at = timestamp
+
+        async with self._session_factory() as session:
+            profile = await session.get(Profile, state.id)
+            if profile is None:
+                return
+
+            updated = False
+            if getattr(profile, "trakt_history_limit", None) != history_limit:
+                profile.trakt_history_limit = history_limit
+                updated = True
+            if movie_total is not None and (
+                movie_total
+                != getattr(profile, "trakt_movie_history_count", None)
+            ):
+                profile.trakt_movie_history_count = movie_total
+                updated = True
+            if show_total is not None and (
+                show_total != getattr(profile, "trakt_show_history_count", None)
+            ):
+                profile.trakt_show_history_count = show_total
+                updated = True
+            if timestamp is not None and (
+                getattr(profile, "trakt_history_refreshed_at", None) != timestamp
+            ):
+                profile.trakt_history_refreshed_at = timestamp
+                updated = True
+            if timestamp is None and not updated:
+                # Keep the in-memory timestamp aligned with the stored value.
+                state.trakt_history_refreshed_at = getattr(
+                    profile, "trakt_history_refreshed_at", None
+                )
+            if updated:
+                now = datetime.utcnow()
+                profile.updated_at = now
+                await session.commit()
+
+    async def _maybe_refresh_trakt_history_stats(
+        self, state: ProfileState
+    ) -> ProfileState:
+        """Refresh cached Trakt counts if the data is stale."""
+
+        if not state.trakt_access_token:
+            return state
+
+        refreshed_at = state.trakt_history_refreshed_at
+        if refreshed_at and datetime.utcnow() - refreshed_at < timedelta(hours=12):
+            return state
+
+        movie_batch = await self._trakt.fetch_history(
+            "movies",
+            client_id=state.trakt_client_id,
+            access_token=state.trakt_access_token,
+            limit=1,
+        )
+        show_batch = await self._trakt.fetch_history(
+            "shows",
+            client_id=state.trakt_client_id,
+            access_token=state.trakt_access_token,
+            limit=1,
+        )
+
+        await self._store_trakt_history_stats(
+            state,
+            history_limit=state.trakt_history_limit,
+            movie_total=(movie_batch.total if movie_batch.fetched else None),
+            show_total=(show_batch.total if show_batch.fetched else None),
+        )
+        return state
 
     async def _ensure_catalog_scope(self, state: ProfileState) -> None:
         """Ensure stored catalog identifiers include the profile namespace."""
@@ -691,6 +831,10 @@ class CatalogService:
                     response_cache_seconds=config.response_cache or self._settings.response_cache_seconds,
                     trakt_client_id=config.trakt_client_id or self._settings.trakt_client_id,
                     trakt_access_token=config.trakt_access_token or self._settings.trakt_access_token,
+                    trakt_history_limit=(
+                        config.trakt_history_limit
+                        or self._settings.trakt_history_limit
+                    ),
                     metadata_addon_url=metadata_addon,
                     next_refresh_at=now,
                     last_refreshed_at=None,
@@ -728,6 +872,13 @@ class CatalogService:
                 if config.trakt_access_token is not None and config.trakt_access_token != profile.trakt_access_token:
                     profile.trakt_access_token = config.trakt_access_token
                     refresh_required = True
+                if (
+                    config.trakt_history_limit
+                    and config.trakt_history_limit
+                    != getattr(profile, "trakt_history_limit", None)
+                ):
+                    profile.trakt_history_limit = config.trakt_history_limit
+                    refresh_required = True
                 if config.metadata_addon_url is not None:
                     new_metadata_url = str(config.metadata_addon_url)
                     if new_metadata_url != getattr(profile, "metadata_addon_url", None):
@@ -752,6 +903,7 @@ class CatalogService:
         state = await self._load_profile_state(profile_id)
         if state is None:
             return None
+        state = await self._maybe_refresh_trakt_history_stats(state)
         needs_refresh, has_catalogs = await self._needs_refresh(state)
         refreshing = self._is_refreshing(profile_id)
         if refreshing:
@@ -807,6 +959,7 @@ class CatalogService:
                     openrouter_model=self._settings.openrouter_model,
                     trakt_client_id=self._settings.trakt_client_id,
                     trakt_access_token=self._settings.trakt_access_token,
+                    trakt_history_limit=self._settings.trakt_history_limit,
                     catalog_count=self._settings.catalog_count,
                     catalog_item_count=self._settings.catalog_item_count,
                     refresh_interval_seconds=self._settings.refresh_interval_seconds,
@@ -837,6 +990,9 @@ class CatalogService:
                     updated = True
                 if profile.response_cache_seconds != self._settings.response_cache_seconds:
                     profile.response_cache_seconds = self._settings.response_cache_seconds
+                    updated = True
+                if getattr(profile, "trakt_history_limit", None) != self._settings.trakt_history_limit:
+                    profile.trakt_history_limit = self._settings.trakt_history_limit
                     updated = True
                 if getattr(profile, "metadata_addon_url", None) != self._default_metadata_addon_url:
                     profile.metadata_addon_url = self._default_metadata_addon_url

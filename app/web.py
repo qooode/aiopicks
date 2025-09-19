@@ -207,6 +207,40 @@ CONFIG_TEMPLATE = dedent(
             background: var(--surface-muted);
             border-left: 4px solid var(--outline);
         }
+        .stats-block {
+            margin-top: 1.25rem;
+            padding: 1rem 1.25rem;
+            border-radius: 16px;
+            background: var(--surface-muted);
+            border: 1px solid var(--outline);
+        }
+        .stats-grid {
+            display: flex;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+        }
+        .stats-item {
+            min-width: 120px;
+        }
+        .stats-number {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .stats-label {
+            display: block;
+            margin-top: 0.2rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+        .stats-summary,
+        .stats-updated {
+            margin: 0.6rem 0 0;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
         .preview {
             background: var(--surface-muted);
             border: 1px dashed var(--outline);
@@ -274,6 +308,20 @@ CONFIG_TEMPLATE = dedent(
                     <button id="trakt-disconnect" type="button" class="secondary hidden">Disconnect</button>
                 </div>
                 <div class="status" id="trakt-status"></div>
+                <div class="stats-block hidden" id="trakt-stats">
+                    <div class="stats-grid">
+                        <div class="stats-item">
+                            <div class="stats-number" id="trakt-stats-movies">0</div>
+                            <span class="stats-label">Movies watched</span>
+                        </div>
+                        <div class="stats-item">
+                            <div class="stats-number" id="trakt-stats-shows">0</div>
+                            <span class="stats-label">Shows watched</span>
+                        </div>
+                    </div>
+                    <p class="stats-summary" id="trakt-stats-summary"></p>
+                    <p class="stats-updated" id="trakt-stats-updated"></p>
+                </div>
             </section>
             <section class="card" id="manifest-card">
                 <h2>Manifest builder</h2>
@@ -298,6 +346,10 @@ CONFIG_TEMPLATE = dedent(
                 <div class="field">
                     <label for="config-catalog-items">Items per catalog <span class="range-value" id="catalog-items-value"></span></label>
                     <input id="config-catalog-items" type="range" min="4" max="100" step="1" />
+                </div>
+                <div class="field">
+                    <label for="config-history-limit">History depth <span class="helper">How many recent plays to filter duplicates</span> <span class="range-value" id="history-limit-value"></span></label>
+                    <input id="config-history-limit" type="range" min="100" max="2000" step="50" />
                 </div>
                 <div class="field">
                     <label for="config-refresh-interval">Refresh cadence <span class="helper">How often the AI rethinks the catalogs</span></label>
@@ -335,6 +387,7 @@ CONFIG_TEMPLATE = dedent(
         (function () {
             const defaults = JSON.parse('__DEFAULTS_JSON__');
             const baseManifestUrl = new URL('/manifest.json', window.location.origin).toString();
+            const numberFormatter = new Intl.NumberFormat();
             const openrouterKey = document.getElementById('config-openrouter-key');
             const openrouterModel = document.getElementById('config-openrouter-model');
             const metadataAddonInput = document.getElementById('config-metadata-addon');
@@ -342,6 +395,8 @@ CONFIG_TEMPLATE = dedent(
             const catalogValue = document.getElementById('catalog-count-value');
             const catalogItemsSlider = document.getElementById('config-catalog-items');
             const catalogItemsValue = document.getElementById('catalog-items-value');
+            const historySlider = document.getElementById('config-history-limit');
+            const historyValue = document.getElementById('history-limit-value');
             const refreshSelect = document.getElementById('config-refresh-interval');
             const cacheSelect = document.getElementById('config-cache-ttl');
             const prepareProfileButton = document.getElementById('prepare-profile');
@@ -358,6 +413,11 @@ CONFIG_TEMPLATE = dedent(
             const traktDisconnectButton = document.getElementById('trakt-disconnect');
             const traktStatus = document.getElementById('trakt-status');
             const traktHint = document.getElementById('trakt-hint');
+            const traktStatsBlock = document.getElementById('trakt-stats');
+            const traktStatsMovies = document.getElementById('trakt-stats-movies');
+            const traktStatsShows = document.getElementById('trakt-stats-shows');
+            const traktStatsSummary = document.getElementById('trakt-stats-summary');
+            const traktStatsUpdated = document.getElementById('trakt-stats-updated');
             const traktLoginAvailable = Boolean(defaults.traktLoginAvailable);
             const traktCallbackOrigin = (defaults.traktCallbackOrigin || '').trim();
             const traktOrigins = [window.location.origin];
@@ -368,6 +428,7 @@ CONFIG_TEMPLATE = dedent(
             const traktAuth = { accessToken: '', refreshToken: '' };
             let traktPending = false;
             let copyTimeout = null;
+            let historyLimitTouched = false;
             let preparePending = false;
             let profileStatus = null;
             let statusPollTimer = null;
@@ -379,6 +440,10 @@ CONFIG_TEMPLATE = dedent(
             const defaultCatalogItems = defaults.catalogItemCount || catalogItemsSlider.min || 4;
             catalogItemsSlider.value = defaultCatalogItems;
             catalogItemsValue.textContent = catalogItemsSlider.value;
+            const resolvedHistoryLimit =
+                defaults.traktHistoryLimit || historySlider.value || historySlider.max || 1000;
+            historySlider.value = resolvedHistoryLimit;
+            historyValue.textContent = formatHistoryLimit(resolvedHistoryLimit);
             refreshSelect.value = String(defaults.refreshIntervalSeconds || refreshSelect.value);
             ensureOption(refreshSelect, refreshSelect.value, formatSeconds(Number(refreshSelect.value)));
             cacheSelect.value = String(defaults.responseCacheSeconds || cacheSelect.value);
@@ -396,6 +461,7 @@ CONFIG_TEMPLATE = dedent(
             updateManifestPreview();
             updateManifestUi();
             updateManifestStatus();
+            updateTraktStats();
             void fetchProfileStatus({ useConfig: true, silent: true }).then((status) => {
                 if (status && status.refreshing) {
                     scheduleStatusPoll();
@@ -411,6 +477,13 @@ CONFIG_TEMPLATE = dedent(
                 catalogItemsValue.textContent = catalogItemsSlider.value;
                 markProfileDirty();
                 updateManifestPreview();
+            });
+            historySlider.addEventListener('input', () => {
+                historyLimitTouched = true;
+                historyValue.textContent = formatHistoryLimit(historySlider.value);
+                markProfileDirty();
+                updateManifestPreview();
+                updateTraktStats();
             });
             openrouterModel.addEventListener('input', () => {
                 markProfileDirty();
@@ -680,6 +753,7 @@ CONFIG_TEMPLATE = dedent(
                 profileStatus = null;
                 updateManifestStatus();
                 updateManifestUi();
+                updateTraktStats();
             }
 
             function updateManifestUi() {
@@ -718,6 +792,11 @@ CONFIG_TEMPLATE = dedent(
                 if (!profileId) {
                     return null;
                 }
+                const historyLimit = Number(raw.traktHistoryLimit);
+                const historyRaw = raw.traktHistory && typeof raw.traktHistory === 'object' ? raw.traktHistory : {};
+                const moviesWatched = Number(historyRaw.movies);
+                const showsWatched = Number(historyRaw.shows);
+                const refreshedAt = typeof historyRaw.refreshedAt === 'string' ? historyRaw.refreshedAt : '';
                 return {
                     profileId,
                     hasCatalogs: Boolean(raw.hasCatalogs),
@@ -729,6 +808,12 @@ CONFIG_TEMPLATE = dedent(
                     metadataAddon: typeof raw.metadataAddon === 'string'
                         ? raw.metadataAddon.trim()
                         : '',
+                    traktHistoryLimit: Number.isFinite(historyLimit) && historyLimit > 0 ? historyLimit : 0,
+                    traktHistory: {
+                        movies: Number.isFinite(moviesWatched) && moviesWatched > 0 ? moviesWatched : 0,
+                        shows: Number.isFinite(showsWatched) && showsWatched > 0 ? showsWatched : 0,
+                        refreshedAt,
+                    },
                 };
             }
 
@@ -739,6 +824,7 @@ CONFIG_TEMPLATE = dedent(
                     metadataAddon: metadataAddonInput.value.trim(),
                     catalogCount: catalogSlider.value,
                     catalogItems: catalogItemsSlider.value,
+                    traktHistoryLimit: historySlider.value,
                     refreshInterval: refreshSelect.value,
                     cacheTtl: cacheSelect.value,
                     traktAccessToken: traktAuth.accessToken,
@@ -756,6 +842,9 @@ CONFIG_TEMPLATE = dedent(
                 if (settings.openrouterModel) payload.openrouterModel = settings.openrouterModel;
                 if (settings.catalogCount) payload.catalogCount = Number(settings.catalogCount);
                 if (settings.catalogItems) payload.catalogItems = Number(settings.catalogItems);
+                if (settings.traktHistoryLimit) {
+                    payload.traktHistoryLimit = Number(settings.traktHistoryLimit);
+                }
                 if (settings.refreshInterval) payload.refreshInterval = Number(settings.refreshInterval);
                 if (settings.cacheTtl) payload.cacheTtl = Number(settings.cacheTtl);
                 if (settings.traktAccessToken) payload.traktAccessToken = settings.traktAccessToken;
@@ -809,9 +898,11 @@ CONFIG_TEMPLATE = dedent(
                         return;
                     }
                     profileStatus = normalized;
+                    syncHistoryLimitFromStatus();
                     updateManifestPreview();
                     updateManifestUi();
                     updateManifestStatus();
+                    updateTraktStats();
                     if (profileStatus.refreshing) {
                         scheduleStatusPoll();
                     }
@@ -848,9 +939,11 @@ CONFIG_TEMPLATE = dedent(
                         return null;
                     }
                     profileStatus = normalized;
+                    syncHistoryLimitFromStatus();
                     updateManifestPreview();
                     updateManifestUi();
                     updateManifestStatus();
+                    updateTraktStats();
                     return profileStatus;
                 } catch (error) {
                     console.error(error);
@@ -874,6 +967,9 @@ CONFIG_TEMPLATE = dedent(
                 if (settings.openrouterModel) params.set('openrouterModel', settings.openrouterModel);
                 if (settings.catalogCount) params.set('catalogCount', settings.catalogCount);
                 if (settings.catalogItems) params.set('catalogItems', settings.catalogItems);
+                if (settings.traktHistoryLimit) {
+                    params.set('traktHistoryLimit', settings.traktHistoryLimit);
+                }
                 if (settings.refreshInterval) params.set('refreshInterval', settings.refreshInterval);
                 if (settings.cacheTtl) params.set('cacheTtl', settings.cacheTtl);
                 if (settings.traktAccessToken) {
@@ -886,6 +982,25 @@ CONFIG_TEMPLATE = dedent(
 
             function updateManifestPreview() {
                 manifestPreview.textContent = buildConfiguredUrl();
+            }
+
+            function syncHistoryLimitFromStatus() {
+                if (!profileStatus) {
+                    return;
+                }
+                const limit = Number(profileStatus.traktHistoryLimit);
+                if (!Number.isFinite(limit) || limit <= 0) {
+                    return;
+                }
+                const currentValue = Number(historySlider.value);
+                if (historyLimitTouched && currentValue !== limit) {
+                    return;
+                }
+                historyLimitTouched = false;
+                if (currentValue !== limit) {
+                    historySlider.value = String(limit);
+                }
+                historyValue.textContent = formatHistoryLimit(limit);
             }
 
             async function copyToClipboard(value) {
@@ -914,6 +1029,14 @@ CONFIG_TEMPLATE = dedent(
                 }
             }
 
+            function formatHistoryLimit(value) {
+                const numeric = Number(value);
+                if (!Number.isFinite(numeric) || numeric <= 0) {
+                    return '';
+                }
+                return `${numberFormatter.format(Math.round(numeric))} plays`;
+            }
+
             function formatSeconds(seconds) {
                 if (!Number.isFinite(seconds) || seconds <= 0) {
                     return 'custom';
@@ -935,6 +1058,48 @@ CONFIG_TEMPLATE = dedent(
                 traktDisconnectButton.classList.toggle('hidden', !connected);
                 traktLoginButton.disabled = !traktLoginAvailable || traktPending;
                 traktDisconnectButton.disabled = traktPending || !connected;
+                updateTraktStats();
+            }
+
+            function updateTraktStats() {
+                if (!traktStatsBlock || !traktStatsMovies || !traktStatsShows || !traktStatsSummary || !traktStatsUpdated) {
+                    return;
+                }
+                const connected = Boolean(traktAuth.accessToken);
+                if (!connected || !profileStatus || !profileStatus.traktHistory) {
+                    traktStatsBlock.classList.add('hidden');
+                    traktStatsMovies.textContent = '0';
+                    traktStatsShows.textContent = '0';
+                    traktStatsSummary.textContent = '';
+                    traktStatsUpdated.textContent = '';
+                    return;
+                }
+                const history = profileStatus.traktHistory || {};
+                const movies = Number(history.movies) || 0;
+                const shows = Number(history.shows) || 0;
+                traktStatsMovies.textContent = numberFormatter.format(movies);
+                traktStatsShows.textContent = numberFormatter.format(shows);
+                let summaryLimit = Number(profileStatus.traktHistoryLimit) || 0;
+                if (historyLimitTouched) {
+                    summaryLimit = Number(historySlider.value) || summaryLimit;
+                } else if (!summaryLimit) {
+                    summaryLimit = Number(historySlider.value);
+                }
+                if (Number.isFinite(summaryLimit) && summaryLimit > 0) {
+                    traktStatsSummary.textContent = `Filtering repeats from your latest ${numberFormatter.format(Math.round(summaryLimit))} plays.`;
+                } else {
+                    traktStatsSummary.textContent = '';
+                }
+                const refreshedAt = typeof history.refreshedAt === 'string' ? history.refreshedAt : '';
+                if (refreshedAt) {
+                    const refreshedDate = new Date(refreshedAt);
+                    traktStatsUpdated.textContent = Number.isNaN(refreshedDate.getTime())
+                        ? ''
+                        : `Synced ${refreshedDate.toLocaleString()}.`;
+                } else {
+                    traktStatsUpdated.textContent = '';
+                }
+                traktStatsBlock.classList.remove('hidden');
             }
 
             function refreshTraktMessaging() {
@@ -1074,6 +1239,7 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
         "openrouterModel": settings.openrouter_model,
         "catalogCount": settings.catalog_count,
         "catalogItemCount": settings.catalog_item_count,
+        "traktHistoryLimit": settings.trakt_history_limit,
         "refreshIntervalSeconds": settings.refresh_interval_seconds,
         "responseCacheSeconds": settings.response_cache_seconds,
         "traktAccessToken": settings.trakt_access_token or "",
