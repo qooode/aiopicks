@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import cast
+
+from app.config import Settings
+from app.models import Catalog, CatalogBundle, CatalogItem
+from app.services.openrouter import OpenRouterClient
+
+
+class _DummyAsyncClient:
+    async def post(self, *args, **kwargs):  # pragma: no cover - not used in tests
+        raise AssertionError("Network access should not be triggered during tests")
+
+
+def _make_client() -> OpenRouterClient:
+    settings = Settings(_env_file=None)
+    return OpenRouterClient(settings, cast(object, _DummyAsyncClient()))  # type: ignore[arg-type]
+
+
+def test_openrouter_apply_exclusions_trims_items() -> None:
+    """Catalog items matching watched fingerprints are removed up front."""
+
+    client = _make_client()
+    now = datetime.utcnow()
+    watched = {"movie": {"fingerprints": {"movie:imdb:tt1234567"}, "titles": []}}
+    bundle = CatalogBundle(
+        movie_catalogs=[
+            Catalog(
+                id="aiopicks-movie-demo",
+                type="movie",
+                title="Demo",
+                description=None,
+                seed="seed",
+                items=[
+                    CatalogItem(
+                        title="Seen Film",
+                        type="movie",
+                        imdb_id="tt1234567",
+                        year=2020,
+                    ),
+                    CatalogItem(
+                        title="Fresh Film",
+                        type="movie",
+                        imdb_id="tt7654321",
+                        year=2021,
+                    ),
+                ],
+                generated_at=now,
+            )
+        ],
+        series_catalogs=[],
+    )
+
+    client._apply_exclusions(bundle, watched)
+
+    catalog = bundle.movie_catalogs[0]
+    assert len(catalog.items) == 1
+    assert catalog.items[0].title == "Fresh Film"
+
+
+def test_normalise_catalog_skips_excluded_items() -> None:
+    """Normalisation drops watched items and reports missing slots."""
+
+    client = _make_client()
+    now = datetime.utcnow()
+    catalog = Catalog(
+        id="aiopicks-movie-demo",
+        type="movie",
+        title="Demo",
+        description=None,
+        seed="seed",
+        items=[
+            CatalogItem(
+                title="Seen Film",
+                type="movie",
+                imdb_id="tt1234567",
+                year=2020,
+            ),
+            CatalogItem(
+                title="Fresh Film",
+                type="movie",
+                imdb_id="tt7654321",
+                year=2021,
+            ),
+        ],
+        generated_at=now,
+    )
+
+    cleaned, summaries, missing = client._normalise_catalog(
+        catalog,
+        item_limit=2,
+        exclusions={"fingerprints": {"movie:imdb:tt1234567"}},
+    )
+
+    assert [item.title for item in cleaned] == ["Fresh Film"]
+    assert summaries == ["Fresh Film (2021)"]
+    assert missing == 1

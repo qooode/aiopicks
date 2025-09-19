@@ -202,6 +202,14 @@ class ProfileStatus:
         }
 
 
+@dataclass(slots=True)
+class WatchedMediaIndex:
+    """Fingerprints and samples of completed titles per content type."""
+
+    fingerprints: set[str]
+    recent_titles: list[str]
+
+
 class CatalogService:
     """Coordinates Trakt ingestion with AI catalog generation."""
 
@@ -420,6 +428,8 @@ class CatalogService:
         seed = secrets.token_hex(4)
         catalogs: dict[str, dict[str, Catalog]] | None = None
         metadata_url = state.metadata_addon_url or self._default_metadata_addon_url
+        watched_index = self._build_watched_index(movie_history, show_history)
+        exclusion_payload = self._serialise_watched_index(watched_index)
 
         try:
             bundle = await self._ai.generate_catalogs(
@@ -427,6 +437,7 @@ class CatalogService:
                 seed=seed,
                 api_key=state.openrouter_api_key,
                 model=state.openrouter_model,
+                exclusions=exclusion_payload,
             )
             catalogs = self._bundle_to_dict(bundle)
             await self._enrich_catalogs_with_cinemeta(catalogs, metadata_url)
@@ -848,6 +859,83 @@ class CatalogService:
             "movie": {catalog.id: catalog for catalog in bundle.movie_catalogs},
             "series": {catalog.id: catalog for catalog in bundle.series_catalogs},
         }
+
+    def _build_watched_index(
+        self,
+        movie_history: list[dict[str, Any]],
+        show_history: list[dict[str, Any]],
+    ) -> dict[str, WatchedMediaIndex]:
+        return {
+            "movie": self._index_history_items(movie_history, key="movie"),
+            "series": self._index_history_items(show_history, key="show"),
+        }
+
+    def _serialise_watched_index(
+        self, index: dict[str, WatchedMediaIndex]
+    ) -> dict[str, dict[str, Any]]:
+        payload: dict[str, dict[str, Any]] = {}
+        for content_type, data in index.items():
+            if not data.fingerprints and not data.recent_titles:
+                continue
+            payload[content_type] = {
+                "fingerprints": sorted(data.fingerprints),
+                "recent_titles": data.recent_titles[:24],
+            }
+        return payload
+
+    def _index_history_items(
+        self,
+        history: list[dict[str, Any]],
+        *,
+        key: str,
+    ) -> WatchedMediaIndex:
+        prefix = "movie" if key == "movie" else "series"
+        fingerprints: set[str] = set()
+        titles: list[str] = []
+
+        for entry in history:
+            media = entry.get(key) or {}
+            if not isinstance(media, dict):
+                continue
+            ids = media.get("ids") or {}
+            if not isinstance(ids, dict):
+                ids = {}
+
+            imdb = ids.get("imdb")
+            if isinstance(imdb, str) and imdb.strip():
+                fingerprints.add(f"{prefix}:imdb:{imdb.strip().lower()}")
+
+            trakt = ids.get("trakt")
+            if isinstance(trakt, int):
+                fingerprints.add(f"{prefix}:trakt:{trakt}")
+
+            tmdb = ids.get("tmdb")
+            if isinstance(tmdb, int):
+                fingerprints.add(f"{prefix}:tmdb:{tmdb}")
+
+            slug_id = ids.get("slug")
+            if isinstance(slug_id, str) and slug_id:
+                slug = slugify(slug_id)
+                if slug:
+                    fingerprints.add(f"{prefix}:slug:{slug}")
+
+            title = media.get("title")
+            if isinstance(title, str) and title.strip():
+                normalized = title.strip()
+                display_year = media.get("year")
+                if isinstance(display_year, int):
+                    display = f"{normalized} ({display_year})"
+                else:
+                    display = normalized
+                if display not in titles:
+                    titles.append(display)
+                lowered = normalized.casefold()
+                if lowered:
+                    fingerprints.add(f"{prefix}:title:{lowered}")
+                    if isinstance(display_year, int):
+                        fingerprints.add(f"{prefix}:title:{lowered}:{display_year}")
+
+        return WatchedMediaIndex(fingerprints=fingerprints, recent_titles=titles[:40])
 
     def _build_summary(
         self,
