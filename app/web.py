@@ -993,8 +993,9 @@ CONFIG_TEMPLATE = dedent(
             function buildProfileQuery(options = {}) {
                 const { includeProfileId = true, includeConfig = false } = options;
                 const params = new URLSearchParams();
-                if (includeProfileId) {
-                    const profileId = resolveProfileId({ createIfMissing: true });
+                const shouldIncludeProfile = includeProfileId || includeConfig;
+                if (shouldIncludeProfile) {
+                    const profileId = resolveProfileId({ createIfMissing: includeProfileId });
                     if (profileId) {
                         params.set('profileId', profileId);
                     }
