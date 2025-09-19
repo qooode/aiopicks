@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import datetime, timedelta
 from typing import cast
 
@@ -131,6 +132,60 @@ def test_profile_id_inferred_from_catalog_id() -> None:
     scoped_id = "user-123abc__aiopicks-movie-epic-adventures"
     assert service.profile_id_from_catalog_id(scoped_id) == "user-123abc"
     assert service.profile_id_from_catalog_id("aiopicks-movie-epic-adventures") is None
+
+
+def test_profile_id_uses_trakt_slug() -> None:
+    """Trakt logins derive stable profile identifiers from the user slug."""
+
+    class DummyTrakt:
+        async def fetch_user(self, *, client_id=None, access_token=None):  # noqa: D401
+            return {
+                "ids": {"slug": "Example_User"},
+                "username": "Example_User",
+                "name": "Example User",
+            }
+
+    settings = Settings(_env_file=None)
+    service = CatalogService(
+        settings,
+        cast(TraktClient, DummyTrakt()),
+        cast(OpenRouterClient, object()),
+        cast(CinemetaClient, object()),
+        cast(Database, object()),
+    )
+
+    config = ManifestConfig.model_validate(
+        {"traktAccessToken": "token-123", "traktClientId": "client"}
+    )
+
+    profile_id = asyncio.run(service.determine_profile_id(config))
+
+    assert profile_id == "trakt-example-user"
+
+
+def test_profile_id_hashes_trakt_token_when_slug_missing() -> None:
+    """Fallback hashes the access token to keep IDs unique when slug lookup fails."""
+
+    class DummyTrakt:
+        async def fetch_user(self, *, client_id=None, access_token=None):  # noqa: D401
+            return {}
+
+    token = "token-456"
+    expected = hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
+
+    settings = Settings(_env_file=None)
+    service = CatalogService(
+        settings,
+        cast(TraktClient, DummyTrakt()),
+        cast(OpenRouterClient, object()),
+        cast(CinemetaClient, object()),
+        cast(Database, object()),
+    )
+
+    config = ManifestConfig.model_validate({"traktAccessToken": token})
+    profile_id = asyncio.run(service.determine_profile_id(config))
+
+    assert profile_id == f"trakt-{expected}"
 
 
 def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:

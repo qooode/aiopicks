@@ -315,7 +315,7 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 )
             )
 
-        profile_id = service.determine_profile_id(config)
+        profile_id = await service.determine_profile_id(config)
         status = await service.get_profile_status(profile_id)
 
         def _requires_resolution(existing_status) -> bool:

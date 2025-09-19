@@ -919,7 +919,7 @@ class CatalogService:
                 )
 
     async def _resolve_profile(self, config: ManifestConfig) -> ProfileContext:
-        profile_id = self._determine_profile_id(config)
+        profile_id = await self._determine_profile_id(config)
         async with self._session_factory() as session:
             profile = await session.get(Profile, profile_id)
             created = False
@@ -1041,20 +1041,79 @@ class CatalogService:
 
         return self._is_refreshing(profile_id)
 
-    def determine_profile_id(self, config: ManifestConfig) -> str:
+    async def determine_profile_id(self, config: ManifestConfig) -> str:
         """Expose profile id derivation for external callers."""
 
-        return self._determine_profile_id(config)
+        return await self._determine_profile_id(config)
 
-    def _determine_profile_id(self, config: ManifestConfig) -> str:
+    async def _determine_profile_id(self, config: ManifestConfig) -> str:
         if config.profile_id:
             slug = slugify(config.profile_id)
             if slug:
                 return slug
+
+        trakt_profile = await self._profile_id_from_trakt(config)
+        if trakt_profile:
+            return trakt_profile
+
         if config.openrouter_key:
             digest = hashlib.sha256(config.openrouter_key.encode("utf-8")).hexdigest()[:12]
             return f"user-{digest}"
+
         return "default"
+
+    async def _profile_id_from_trakt(self, config: ManifestConfig) -> str | None:
+        access_token = config.trakt_access_token or self._settings.trakt_access_token
+        if not access_token:
+            return None
+
+        client_id = config.trakt_client_id or self._settings.trakt_client_id
+        try:
+            profile = await self._trakt.fetch_user(
+                client_id=client_id,
+                access_token=access_token,
+            )
+        except Exception:  # pragma: no cover - defensive guard
+            logger.exception("Failed to fetch Trakt profile for ID derivation")
+            profile = {}
+
+        candidates: list[str] = []
+        if isinstance(profile, dict):
+            ids = profile.get("ids")
+            if isinstance(ids, dict):
+                slug = ids.get("slug")
+                if isinstance(slug, str):
+                    candidates.append(slug)
+            username = profile.get("username")
+            if isinstance(username, str):
+                candidates.append(username)
+            name = profile.get("name")
+            if isinstance(name, str):
+                candidates.append(name)
+            user_section = profile.get("user")
+            if isinstance(user_section, dict):
+                nested_ids = user_section.get("ids")
+                if isinstance(nested_ids, dict):
+                    nested_slug = nested_ids.get("slug")
+                    if isinstance(nested_slug, str):
+                        candidates.append(nested_slug)
+                nested_username = user_section.get("username")
+                if isinstance(nested_username, str):
+                    candidates.append(nested_username)
+                nested_name = user_section.get("name")
+                if isinstance(nested_name, str):
+                    candidates.append(nested_name)
+
+        for raw_candidate in candidates:
+            candidate = raw_candidate.strip()
+            if not candidate:
+                continue
+            slug = slugify(candidate)
+            if slug and slug != "catalog":
+                return f"trakt-{slug}"
+
+        digest = hashlib.sha256(access_token.encode("utf-8")).hexdigest()[:12]
+        return f"trakt-{digest}"
 
     def profile_id_from_catalog_id(self, catalog_id: str) -> str | None:
         profile_id, _ = self._split_scoped_catalog_id(catalog_id)
