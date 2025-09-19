@@ -20,7 +20,7 @@ class DummyCatalogService(CatalogService):
         self, config: ManifestConfig
     ) -> tuple[SimpleNamespace, list[dict[str, object]]]:
         self.last_config = config
-        state = SimpleNamespace(openrouter_model="test-model")
+        state = SimpleNamespace(openrouter_model="test-model", id="test-profile")
         return state, []
 
     def profile_id_from_catalog_id(self, catalog_id: str) -> str | None:  # pragma: no cover - not used
@@ -39,6 +39,7 @@ def test_manifest_advertises_only_catalog_resource() -> None:
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["id"] == "com.aiopicks.python.test-profile"
     assert payload["resources"] == ["catalog"]
 
 

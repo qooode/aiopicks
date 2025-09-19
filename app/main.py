@@ -134,11 +134,15 @@ def register_routes(fastapi_app: FastAPI) -> None:
             profile_state, catalogs = await service.list_manifest_catalogs(config)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        manifest_suffix = getattr(profile_state, "id", None)
+        manifest_id = "com.aiopicks.python"
+        if isinstance(manifest_suffix, str) and manifest_suffix.strip():
+            manifest_id = f"{manifest_id}.{manifest_suffix.strip()}"
         manifest_name = (config.manifest_name or "").strip()
         if not manifest_name:
             manifest_name = settings.app_name
         return {
-            "id": "com.aiopicks.python",
+            "id": manifest_id,
             "version": "1.0.0",
             "name": manifest_name,
             "description": "Dynamic catalogs tailored to your Trakt history.",
