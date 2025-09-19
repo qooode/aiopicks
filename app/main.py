@@ -293,10 +293,94 @@ def register_routes(fastapi_app: FastAPI) -> None:
             config = ManifestConfig.from_query(request.query_params)
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=exc.errors()) from exc
+
+        def _has_overrides(cfg: ManifestConfig) -> bool:
+            return any(
+                value is not None
+                for value in (
+                    cfg.openrouter_key,
+                    cfg.openrouter_model,
+                    cfg.catalog_count,
+                    cfg.catalog_item_count,
+                    cfg.refresh_interval,
+                    cfg.response_cache,
+                    cfg.trakt_history_limit,
+                    cfg.trakt_client_id,
+                    cfg.trakt_access_token,
+                    cfg.metadata_addon_url,
+                )
+            )
+
         profile_id = service.determine_profile_id(config)
         status = await service.get_profile_status(profile_id)
+
+        def _requires_resolution(existing_status) -> bool:
+            if existing_status is None:
+                return _has_overrides(config)
+
+            state = existing_status.state
+            if (
+                config.trakt_access_token is not None
+                and state.trakt_access_token != config.trakt_access_token
+            ):
+                return True
+            if (
+                config.trakt_client_id is not None
+                and state.trakt_client_id != config.trakt_client_id
+            ):
+                return True
+            if (
+                config.trakt_history_limit is not None
+                and state.trakt_history_limit != config.trakt_history_limit
+            ):
+                return True
+            if (
+                config.openrouter_key is not None
+                and state.openrouter_api_key != config.openrouter_key
+            ):
+                return True
+            if (
+                config.openrouter_model is not None
+                and state.openrouter_model != config.openrouter_model
+            ):
+                return True
+            if (
+                config.catalog_count is not None
+                and state.catalog_count != config.catalog_count
+            ):
+                return True
+            if (
+                config.catalog_item_count is not None
+                and state.catalog_item_count != config.catalog_item_count
+            ):
+                return True
+            if (
+                config.refresh_interval is not None
+                and state.refresh_interval_seconds != config.refresh_interval
+            ):
+                return True
+            if (
+                config.response_cache is not None
+                and state.response_cache_seconds != config.response_cache
+            ):
+                return True
+            if config.metadata_addon_url is not None:
+                metadata_url = str(config.metadata_addon_url)
+                if (state.metadata_addon_url or None) != metadata_url:
+                    return True
+            return False
+
+        if _requires_resolution(status):
+            try:
+                context = await service.resolve_profile(config)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            profile_id = context.state.id
+            status = await service.get_profile_status(profile_id)
+
         if status is None:
             raise HTTPException(status_code=404, detail="Profile not found")
+
         return JSONResponse(status.to_payload())
 
     @fastapi_app.post("/api/trakt/login-url")

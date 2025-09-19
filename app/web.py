@@ -651,6 +651,7 @@ CONFIG_TEMPLATE = dedent(
                 updateTraktUi();
                 if (data.status === 'success' && traktAuth.accessToken) {
                     refreshTraktMessaging();
+                    void fetchProfileStatus({ useConfig: true });
                 } else if (data.status === 'success') {
                     showTraktStatus('Trakt did not return an access token. Please try again.', 'error');
                     showTraktHint('Approve the access request in the Trakt window to finish linking.');
