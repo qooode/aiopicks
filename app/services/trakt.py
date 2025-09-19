@@ -86,6 +86,36 @@ class TraktClient:
         total = self._extract_total_count(response, fallback=len(data))
         return HistoryBatch(items=data, total=total, fetched=True)
 
+    async def fetch_stats(
+        self,
+        *,
+        client_id: str | None = None,
+        access_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch aggregate watch statistics for the authenticated user."""
+
+        resolved_client_id = client_id or self._settings.trakt_client_id
+        resolved_access_token = access_token or self._settings.trakt_access_token
+
+        if not (resolved_client_id and resolved_access_token):
+            logger.info("Trakt credentials missing, returning empty stats")
+            return {}
+
+        response = await self._client.get(
+            "/users/me/stats",
+            headers=self._headers(
+                client_id=resolved_client_id, access_token=resolved_access_token
+            ),
+        )
+        if response.status_code >= 400:
+            logger.warning("Failed to fetch Trakt stats: %s", response.text)
+            return {}
+        data = response.json()
+        if not isinstance(data, dict):
+            logger.warning("Unexpected Trakt stats response structure")
+            return {}
+        return data
+
     @staticmethod
     def _extract_total_count(response: httpx.Response, *, fallback: int = 0) -> int:
         header_value = response.headers.get("x-pagination-item-count")

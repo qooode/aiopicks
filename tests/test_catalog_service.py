@@ -85,6 +85,37 @@ def test_profile_status_payload_flags() -> None:
     assert refreshing_payload["needsRefresh"] is True
 
 
+def test_trakt_snapshot_normalisation() -> None:
+    """Rich Trakt stats are flattened for UI consumption."""
+
+    stats = {
+        "movies": {"watched": 297, "plays": 345, "minutes": 4000},
+        "shows": {"watched": 119, "collected": 42},
+        "episodes": {"watched": 1889, "plays": 2151, "minutes": 88000},
+    }
+
+    snapshot = CatalogService._build_trakt_history_snapshot(stats)
+
+    assert snapshot["movies"] == {"watched": 297, "plays": 345, "minutes": 4000}
+    assert snapshot["shows"] == {"watched": 119}
+    assert snapshot["episodes"] == {
+        "watched": 1889,
+        "plays": 2151,
+        "minutes": 88000,
+    }
+    assert snapshot["totalMinutes"] == 4000 + 88000
+
+
+def test_trakt_watched_extraction_handles_missing_sections() -> None:
+    """Missing sections or malformed values do not raise errors."""
+
+    stats = {"movies": {"watched": 12}, "shows": {}}
+
+    assert CatalogService._extract_trakt_watched(stats, "movies") == 12
+    assert CatalogService._extract_trakt_watched(stats, "shows") is None
+    assert CatalogService._extract_trakt_watched(stats, "episodes") is None
+
+
 def test_profile_id_inferred_from_catalog_id() -> None:
     """Catalog IDs embed the profile namespace for lookups."""
 

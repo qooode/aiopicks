@@ -87,6 +87,10 @@ class Database:
             "trakt_history_refreshed_at",
             "ALTER TABLE profiles ADD COLUMN trakt_history_refreshed_at DATETIME",
         )
+        _ensure_column(
+            "trakt_history_snapshot",
+            "ALTER TABLE profiles ADD COLUMN trakt_history_snapshot JSON",
+        )
 
     async def dispose(self) -> None:
         """Dispose of the underlying database engine."""

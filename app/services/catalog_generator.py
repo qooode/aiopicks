@@ -28,7 +28,7 @@ from ..models import Catalog, CatalogBundle, CatalogItem
 from ..utils import slugify
 from .cinemeta import CinemetaClient, CinemetaMatch
 from .openrouter import OpenRouterClient
-from .trakt import TraktClient
+from .trakt import HistoryBatch, TraktClient
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +172,7 @@ class ProfileState:
     trakt_movie_history_count: int = 0
     trakt_show_history_count: int = 0
     trakt_history_refreshed_at: datetime | None = None
+    trakt_history_snapshot: dict[str, Any] | None = None
 
 
 @dataclass
@@ -201,15 +202,7 @@ class ProfileStatus:
             "responseCacheSeconds": self.state.response_cache_seconds,
             "metadataAddon": self.state.metadata_addon_url,
             "traktHistoryLimit": self.state.trakt_history_limit,
-            "traktHistory": {
-                "movies": self.state.trakt_movie_history_count,
-                "shows": self.state.trakt_show_history_count,
-                "refreshedAt": (
-                    self.state.trakt_history_refreshed_at.isoformat()
-                    if self.state.trakt_history_refreshed_at
-                    else None
-                ),
-            },
+            "traktHistory": self._history_payload(),
             "lastRefreshedAt": (
                 self.state.last_refreshed_at.isoformat() if self.state.last_refreshed_at else None
             ),
@@ -221,6 +214,20 @@ class ProfileStatus:
             "refreshing": self.refreshing,
             "ready": self.has_catalogs and not self.refreshing,
         }
+
+    def _history_payload(self) -> dict[str, Any]:
+        payload = {
+            "movies": self.state.trakt_movie_history_count,
+            "shows": self.state.trakt_show_history_count,
+            "refreshedAt": (
+                self.state.trakt_history_refreshed_at.isoformat()
+                if self.state.trakt_history_refreshed_at
+                else None
+            ),
+        }
+        if self.state.trakt_history_snapshot:
+            payload["stats"] = self.state.trakt_history_snapshot
+        return payload
 
 
 @dataclass(slots=True)
@@ -444,15 +451,18 @@ class CatalogService:
         movie_history = movie_history_batch.items
         show_history = show_history_batch.items
 
+        movie_total, show_total, snapshot = await self._gather_trakt_history_metadata(
+            state,
+            movie_batch=movie_history_batch,
+            show_batch=show_history_batch,
+        )
+
         await self._store_trakt_history_stats(
             state,
             history_limit=state.trakt_history_limit,
-            movie_total=(
-                movie_history_batch.total if movie_history_batch.fetched else None
-            ),
-            show_total=(
-                show_history_batch.total if show_history_batch.fetched else None
-            ),
+            movie_total=movie_total,
+            show_total=show_total,
+            snapshot=snapshot,
         )
 
         summary = self._build_summary(
@@ -597,7 +607,47 @@ class CatalogService:
             trakt_history_refreshed_at=getattr(
                 profile, "trakt_history_refreshed_at", None
             ),
+            trakt_history_snapshot=getattr(
+                profile, "trakt_history_snapshot", None
+            ),
         )
+
+    async def _gather_trakt_history_metadata(
+        self,
+        state: ProfileState,
+        *,
+        movie_batch: HistoryBatch | None,
+        show_batch: HistoryBatch | None,
+    ) -> tuple[int | None, int | None, dict[str, Any] | None]:
+        """Combine Trakt history totals with richer aggregated stats."""
+
+        movie_total = (
+            movie_batch.total if movie_batch is not None and movie_batch.fetched else None
+        )
+        show_total = (
+            show_batch.total if show_batch is not None and show_batch.fetched else None
+        )
+        snapshot: dict[str, Any] | None = None
+
+        if not state.trakt_access_token:
+            return movie_total, show_total, snapshot
+
+        stats = await self._trakt.fetch_stats(
+            client_id=state.trakt_client_id,
+            access_token=state.trakt_access_token,
+        )
+        if stats:
+            movie_watched = self._extract_trakt_watched(stats, "movies")
+            show_watched = self._extract_trakt_watched(stats, "shows")
+            if movie_watched is not None:
+                movie_total = movie_watched
+            if show_watched is not None:
+                show_total = show_watched
+            snapshot_data = self._build_trakt_history_snapshot(stats)
+            if snapshot_data:
+                snapshot = snapshot_data
+
+        return movie_total, show_total, snapshot
 
     async def _store_trakt_history_stats(
         self,
@@ -606,6 +656,7 @@ class CatalogService:
         history_limit: int,
         movie_total: int | None,
         show_total: int | None,
+        snapshot: dict[str, Any] | None = None,
     ) -> None:
         """Persist Trakt history counts and keep the in-memory state fresh."""
 
@@ -618,6 +669,8 @@ class CatalogService:
             state.trakt_show_history_count = show_total
             if timestamp is None:
                 timestamp = datetime.utcnow()
+        if snapshot is not None:
+            state.trakt_history_snapshot = snapshot or None
         if timestamp is not None:
             state.trakt_history_refreshed_at = timestamp
 
@@ -641,6 +694,11 @@ class CatalogService:
             ):
                 profile.trakt_show_history_count = show_total
                 updated = True
+            if snapshot is not None and (
+                snapshot or None
+            ) != getattr(profile, "trakt_history_snapshot", None):
+                profile.trakt_history_snapshot = snapshot or None
+                updated = True
             if timestamp is not None and (
                 getattr(profile, "trakt_history_refreshed_at", None) != timestamp
             ):
@@ -655,6 +713,58 @@ class CatalogService:
                 now = datetime.utcnow()
                 profile.updated_at = now
                 await session.commit()
+
+    @staticmethod
+    def _extract_trakt_watched(
+        stats: Mapping[str, Any], section: str
+    ) -> int | None:
+        """Extract the watched counter for a given stats section."""
+
+        segment = stats.get(section)
+        if isinstance(segment, Mapping):
+            value = segment.get("watched")
+            if isinstance(value, int) and value >= 0:
+                return value
+        return None
+
+    @staticmethod
+    def _build_trakt_history_snapshot(stats: Mapping[str, Any]) -> dict[str, Any]:
+        """Normalise rich Trakt stats for UI consumption."""
+
+        def _clean(section: str, keys: tuple[str, ...]) -> dict[str, int]:
+            raw = stats.get(section)
+            if not isinstance(raw, Mapping):
+                return {}
+            cleaned: dict[str, int] = {}
+            for key in keys:
+                value = raw.get(key)
+                if isinstance(value, int) and value >= 0:
+                    cleaned[key] = value
+            return cleaned
+
+        snapshot: dict[str, Any] = {}
+        movies = _clean("movies", ("watched", "plays", "minutes"))
+        shows = _clean("shows", ("watched",))
+        episodes = _clean("episodes", ("watched", "plays", "minutes"))
+
+        if movies:
+            snapshot["movies"] = movies
+        if shows:
+            snapshot["shows"] = shows
+        if episodes:
+            snapshot["episodes"] = episodes
+
+        minute_sources = []
+        movie_minutes = movies.get("minutes")
+        episode_minutes = episodes.get("minutes")
+        if isinstance(movie_minutes, int):
+            minute_sources.append(movie_minutes)
+        if isinstance(episode_minutes, int):
+            minute_sources.append(episode_minutes)
+        if minute_sources:
+            snapshot["totalMinutes"] = sum(minute_sources)
+
+        return snapshot
 
     async def _maybe_refresh_trakt_history_stats(
         self, state: ProfileState
@@ -681,11 +791,18 @@ class CatalogService:
             limit=1,
         )
 
+        movie_total, show_total, snapshot = await self._gather_trakt_history_metadata(
+            state,
+            movie_batch=movie_batch,
+            show_batch=show_batch,
+        )
+
         await self._store_trakt_history_stats(
             state,
             history_limit=state.trakt_history_limit,
-            movie_total=(movie_batch.total if movie_batch.fetched else None),
-            show_total=(show_batch.total if show_batch.fetched else None),
+            movie_total=movie_total,
+            show_total=show_total,
+            snapshot=snapshot,
         )
         return state
 
