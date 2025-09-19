@@ -20,6 +20,16 @@ SYSTEM_PROMPT = (
     "the documented schema and never include commentary outside JSON."
 )
 
+BANNED_PHRASES = (
+    "action-packed",
+    "binge-worthy",
+    "cosmic journey",
+    "epic journey",
+    "must-watch",
+    "superhero action",
+    "thrill ride",
+)
+
 USER_PROMPT_TEMPLATE = """
 You are helping a power user discover new titles based on their Trakt history.
 
@@ -28,6 +38,10 @@ Trakt profile summary (generated at {generated_at} UTC):
 - Total series logged: {series_total}
 - Movie taste snapshot: top genres {movie_genres}; top languages {movie_languages}
 - Series taste snapshot: top genres {series_genres}; top languages {series_languages}
+- Movie fatigue warning: {movie_fatigued_genres}; languages feeling overplayed: {movie_fatigued_languages}
+- Movie curiosity sparks to lean into: {movie_curiosity_genres}; languages worth revisiting: {movie_curiosity_languages}
+- Series fatigue warning: {series_fatigued_genres}; languages feeling overplayed: {series_fatigued_languages}
+- Series curiosity sparks to lean into: {series_curiosity_genres}; languages worth revisiting: {series_curiosity_languages}
 - Recently watched movies: {recent_movies}
 - Recently watched series: {recent_series}
 
@@ -42,7 +56,10 @@ Instructions:
 8. Write titles in natural sentence case (capitalize the first word and proper nouns only), keeping the rest lower-case unless grammar requires otherwise.
 9. Treat the viewer's history as inspiration, not a shopping list—avoid repeating titles mentioned above unless a sequel or continuation is essential, and spotlight why each new pick connects to their tastes.
 10. Lean into discovery: ensure at least 60% of every catalog consists of fresh-to-viewer surprises rather than comfort rewatches.
-11. For each item include only its real title, type, release year, and a concise description. Do not invent IDs, posters, or runtimes—the server enriches entries with Cinemeta.
+11. Make each catalog theme feel distinct: vary tone, pacing, geography, or narrative structure so rows never blur together.
+12. Explicitly dodge burnout themes—only include fatigued genres or languages when you have a sharp, counter-intuitive angle that subverts expectations.
+13. Never use any of these tired phrases: {banned_phrases}. Replace them with specific, sensory hooks tied to the profile above.
+14. For each item include only its real title, type, release year, and a concise description. Do not invent IDs, posters, or runtimes—the server enriches entries with Cinemeta.
 
 Respond with JSON using this structure:
 {{
@@ -98,19 +115,75 @@ class OpenRouterClient:
         if not resolved_key:
             raise RuntimeError("OpenRouter API key is required to generate catalogs")
 
+        movie_profile = profile.get("movies", {})
+        series_profile = profile.get("series", {})
+
+        def _format_pairs(value: Any) -> str:
+            if not value:
+                return "none logged"
+            parts: list[str] = []
+            for item in value:
+                if isinstance(item, (tuple, list)) and len(item) >= 2:
+                    name = str(item[0]).strip()
+                    try:
+                        count = int(item[1])
+                    except (TypeError, ValueError):
+                        count = None
+                    if name:
+                        if count is not None:
+                            parts.append(f"{name} ({count})")
+                        else:
+                            parts.append(name)
+                elif isinstance(item, str) and item.strip():
+                    parts.append(item.strip())
+            return ", ".join(parts) if parts else "none logged"
+
+        def _format_list(value: Any, fallback: str = "none logged") -> str:
+            if not value:
+                return fallback
+            if isinstance(value, str):
+                return value
+            parts = [str(item).strip() for item in value if str(item).strip()]
+            return ", ".join(parts) if parts else fallback
+
         prompt = USER_PROMPT_TEMPLATE.format(
             generated_at=summary.get("generated_at"),
-            movie_total=profile.get("movies", {}).get("total"),
-            series_total=profile.get("series", {}).get("total"),
-            movie_genres=profile.get("movies", {}).get("top_genres"),
-            series_genres=profile.get("series", {}).get("top_genres"),
-            movie_languages=profile.get("movies", {}).get("top_languages"),
-            series_languages=profile.get("series", {}).get("top_languages"),
-            recent_movies=profile.get("movies", {}).get("top_titles"),
-            recent_series=profile.get("series", {}).get("top_titles"),
+            movie_total=movie_profile.get("total") or 0,
+            series_total=series_profile.get("total") or 0,
+            movie_genres=_format_pairs(movie_profile.get("top_genres")),
+            series_genres=_format_pairs(series_profile.get("top_genres")),
+            movie_languages=_format_pairs(movie_profile.get("top_languages")),
+            series_languages=_format_pairs(series_profile.get("top_languages")),
+            movie_fatigued_genres=_format_list(
+                movie_profile.get("fatigued_genres"), "none"
+            ),
+            movie_fatigued_languages=_format_list(
+                movie_profile.get("fatigued_languages"), "none"
+            ),
+            movie_curiosity_genres=_format_list(
+                movie_profile.get("curiosity_genres"), "open to anything"
+            ),
+            movie_curiosity_languages=_format_list(
+                movie_profile.get("curiosity_languages"), "open to any language"
+            ),
+            series_fatigued_genres=_format_list(
+                series_profile.get("fatigued_genres"), "none"
+            ),
+            series_fatigued_languages=_format_list(
+                series_profile.get("fatigued_languages"), "none"
+            ),
+            series_curiosity_genres=_format_list(
+                series_profile.get("curiosity_genres"), "open to anything"
+            ),
+            series_curiosity_languages=_format_list(
+                series_profile.get("curiosity_languages"), "open to any language"
+            ),
+            recent_movies=_format_list(movie_profile.get("top_titles"), "none"),
+            recent_series=_format_list(series_profile.get("top_titles"), "none"),
             catalog_count=catalog_count,
             items_per_catalog=item_target,
             seed=seed,
+            banned_phrases=", ".join(BANNED_PHRASES),
         )
 
         payload = {
