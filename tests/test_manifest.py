@@ -50,13 +50,11 @@ def test_manifest_allows_path_overrides() -> None:
 
     with TestClient(app) as client:
         response = client.get(
-            "/manifest/catalogCount/5/catalogItems/9/manifest.json",
-            params={"catalogCount": "2"},
+            "/manifest/catalogCount/5/catalogItems/9/manifest.json"
         )
 
     assert response.status_code == 200
     assert service.last_config is not None
-    # Path-based overrides should take precedence over the query string.
     assert service.last_config.catalog_count == 5
     assert service.last_config.catalog_item_count == 9
 
@@ -68,5 +66,19 @@ def test_manifest_rejects_malformed_path_overrides() -> None:
 
     with TestClient(app) as client:
         response = client.get("/manifest/catalogCount/6/catalogItems/manifest.json")
+
+    assert response.status_code == 400
+
+
+def test_manifest_rejects_query_overrides() -> None:
+    app = FastAPI()
+    register_routes(app)
+    app.state.catalog_service = DummyCatalogService()
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/manifest.json",
+            params={"catalogCount": "3"},
+        )
 
     assert response.status_code == 400

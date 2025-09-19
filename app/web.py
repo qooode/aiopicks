@@ -1012,27 +1012,38 @@ CONFIG_TEMPLATE = dedent(
 
             function buildConfiguredUrl() {
                 const url = new URL(baseManifestUrl);
-                const params = new URLSearchParams();
+                url.search = '';
                 const settings = collectManifestSettings();
                 if (profileStatus && profileStatus.profileId) {
                     const encodedProfileId = encodeURIComponent(profileStatus.profileId);
                     url.pathname = `/profiles/${encodedProfileId}/manifest.json`;
-                } else if (settings.openrouterKey) {
-                    params.set('openrouterKey', settings.openrouterKey);
+                    return url.toString();
                 }
-                if (settings.openrouterModel) params.set('openrouterModel', settings.openrouterModel);
-                if (settings.catalogCount) params.set('catalogCount', settings.catalogCount);
-                if (settings.catalogItems) params.set('catalogItems', settings.catalogItems);
-                if (settings.traktHistoryLimit) {
-                    params.set('traktHistoryLimit', settings.traktHistoryLimit);
+                const manifestKeys = [
+                    'openrouterKey',
+                    'openrouterModel',
+                    'metadataAddon',
+                    'catalogCount',
+                    'catalogItems',
+                    'traktHistoryLimit',
+                    'refreshInterval',
+                    'cacheTtl',
+                    'traktAccessToken',
+                ];
+                const segments = [];
+                manifestKeys.forEach((key) => {
+                    const value = settings[key];
+                    if (!value) {
+                        return;
+                    }
+                    segments.push(encodeURIComponent(key));
+                    segments.push(encodeURIComponent(String(value)));
+                });
+                if (segments.length > 0) {
+                    url.pathname = `/manifest/${segments.join('/')}/manifest.json`;
+                } else {
+                    url.pathname = '/manifest.json';
                 }
-                if (settings.refreshInterval) params.set('refreshInterval', settings.refreshInterval);
-                if (settings.cacheTtl) params.set('cacheTtl', settings.cacheTtl);
-                if (settings.traktAccessToken) {
-                    params.set('traktAccessToken', settings.traktAccessToken);
-                }
-                if (settings.metadataAddon) params.set('metadataAddon', settings.metadataAddon);
-                url.search = params.toString();
                 return url.toString();
             }
 
