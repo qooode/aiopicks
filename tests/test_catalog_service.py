@@ -58,6 +58,7 @@ def test_profile_status_payload_flags() -> None:
         catalog_item_count=12,
         refresh_interval_seconds=3600,
         response_cache_seconds=600,
+        trakt_history_limit=1_000,
         next_refresh_at=datetime.utcnow() + timedelta(seconds=1800),
         last_refreshed_at=datetime.utcnow(),
     )
@@ -226,6 +227,42 @@ def test_metadata_addon_url_persisted(tmp_path) -> None:
         loaded = await service._load_profile_state(context.state.id)
         assert loaded is not None
         assert loaded.metadata_addon_url == "https://example-addon.strem.fun/manifest.json"
+
+        await database.dispose()
+
+    asyncio.run(runner())
+
+
+def test_history_limit_persisted(tmp_path) -> None:
+    """Custom history limits should be stored and surfaced in profile state."""
+
+    async def runner() -> None:
+        database_path = tmp_path / "history.db"
+        database = Database(f"sqlite+aiosqlite:///{database_path}")
+        await database.create_all()
+
+        settings = Settings(_env_file=None)
+        service = CatalogService(
+            settings,
+            cast(TraktClient, object()),
+            cast(OpenRouterClient, object()),
+            cast(CinemetaClient, object()),
+            database.session_factory,
+        )
+
+        config = ManifestConfig.model_validate(
+            {
+                "openrouterKey": "sk-history",
+                "traktHistoryLimit": 1500,
+            }
+        )
+        context = await service._resolve_profile(config)
+
+        assert context.state.trakt_history_limit == 1500
+
+        loaded = await service._load_profile_state(context.state.id)
+        assert loaded is not None
+        assert loaded.trakt_history_limit == 1500
 
         await database.dispose()
 

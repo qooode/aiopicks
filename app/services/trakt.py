@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -12,6 +13,15 @@ import httpx
 from ..config import Settings
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class HistoryBatch:
+    """Container for a page of history items and the reported total size."""
+
+    items: list[dict[str, Any]]
+    total: int = 0
+    fetched: bool = True
 
 
 class TraktClient:
@@ -44,7 +54,8 @@ class TraktClient:
         *,
         client_id: str | None = None,
         access_token: str | None = None,
-    ) -> list[dict[str, Any]]:
+        limit: int | None = None,
+    ) -> HistoryBatch:
         """Fetch the user's viewing history."""
 
         resolved_client_id = client_id or self._settings.trakt_client_id
@@ -52,11 +63,12 @@ class TraktClient:
 
         if not (resolved_client_id and resolved_access_token):
             logger.info("Trakt credentials missing, returning empty history for %s", content_type)
-            return []
+            return HistoryBatch(items=[], total=0, fetched=False)
 
         url = f"/sync/history/{content_type}"
+        resolved_limit = limit if limit is not None else self._settings.trakt_history_limit
         params = {
-            "limit": self._settings.trakt_history_limit,
+            "limit": resolved_limit,
             "extended": "full",
         }
         response = await self._client.get(
@@ -66,12 +78,23 @@ class TraktClient:
         )
         if response.status_code >= 400:
             logger.warning("Failed to fetch Trakt history for %s: %s", content_type, response.text)
-            return []
+            return HistoryBatch(items=[], total=0, fetched=False)
         data = response.json()
         if not isinstance(data, list):
             logger.warning("Unexpected Trakt response structure for %s", content_type)
-            return []
-        return data
+            return HistoryBatch(items=[], total=0, fetched=False)
+        total = self._extract_total_count(response, fallback=len(data))
+        return HistoryBatch(items=data, total=total, fetched=True)
+
+    @staticmethod
+    def _extract_total_count(response: httpx.Response, *, fallback: int = 0) -> int:
+        header_value = response.headers.get("x-pagination-item-count")
+        if not header_value:
+            return fallback
+        try:
+            return int(header_value)
+        except (TypeError, ValueError):
+            return fallback
 
     @staticmethod
     def summarize_history(history: list[dict[str, Any]], *, key: str) -> dict[str, Any]:

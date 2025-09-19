@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from sqlalchemy import MetaData
+from sqlalchemy import MetaData, inspect, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -39,6 +39,54 @@ class Database:
 
         async with self._engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
+            await connection.run_sync(self._apply_schema_migrations)
+
+    @staticmethod
+    def _apply_schema_migrations(sync_connection) -> None:
+        """Ensure newly introduced columns are available on existing tables."""
+
+        inspector = inspect(sync_connection)
+        table_names = inspector.get_table_names()
+        if "profiles" not in table_names:
+            return
+
+        existing_columns = {
+            column["name"] for column in inspector.get_columns("profiles")
+        }
+
+        def _ensure_column(name: str, ddl: str, init_sql: str | None = None) -> None:
+            if name in existing_columns:
+                return
+            sync_connection.execute(text(ddl))
+            if init_sql:
+                sync_connection.execute(text(init_sql))
+            existing_columns.add(name)
+
+        _ensure_column(
+            "trakt_history_limit",
+            "ALTER TABLE profiles ADD COLUMN trakt_history_limit INTEGER DEFAULT 1000",
+            "UPDATE profiles SET trakt_history_limit = 1000 WHERE trakt_history_limit IS NULL",
+        )
+        _ensure_column(
+            "trakt_movie_history_count",
+            "ALTER TABLE profiles ADD COLUMN trakt_movie_history_count INTEGER DEFAULT 0",
+            (
+                "UPDATE profiles SET trakt_movie_history_count = 0 "
+                "WHERE trakt_movie_history_count IS NULL"
+            ),
+        )
+        _ensure_column(
+            "trakt_show_history_count",
+            "ALTER TABLE profiles ADD COLUMN trakt_show_history_count INTEGER DEFAULT 0",
+            (
+                "UPDATE profiles SET trakt_show_history_count = 0 "
+                "WHERE trakt_show_history_count IS NULL"
+            ),
+        )
+        _ensure_column(
+            "trakt_history_refreshed_at",
+            "ALTER TABLE profiles ADD COLUMN trakt_history_refreshed_at DATETIME",
+        )
 
     async def dispose(self) -> None:
         """Dispose of the underlying database engine."""
