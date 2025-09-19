@@ -433,6 +433,83 @@ CONFIG_TEMPLATE = dedent(
             let profileStatus = null;
             let statusPollTimer = null;
 
+            const profileStorageKey = 'aiopicks.profileId';
+            let persistedProfileId = readStoredProfileId();
+
+            function readStoredProfileId() {
+                if (typeof window === 'undefined' || !window.localStorage) {
+                    return '';
+                }
+                try {
+                    const raw = window.localStorage.getItem(profileStorageKey);
+                    if (typeof raw !== 'string') {
+                        return '';
+                    }
+                    const trimmed = raw.trim().toLowerCase();
+                    if (!trimmed) {
+                        return '';
+                    }
+                    if (!/^[a-z0-9][a-z0-9-]{4,}$/.test(trimmed)) {
+                        return '';
+                    }
+                    return trimmed;
+                } catch (error) {
+                    return '';
+                }
+            }
+
+            function persistProfileId(value) {
+                if (typeof value !== 'string') {
+                    return;
+                }
+                const trimmed = value.trim().toLowerCase();
+                if (!trimmed) {
+                    return;
+                }
+                persistedProfileId = trimmed;
+                if (typeof window === 'undefined' || !window.localStorage) {
+                    return;
+                }
+                try {
+                    window.localStorage.setItem(profileStorageKey, trimmed);
+                } catch (error) {
+                    // Ignore storage failures (e.g. privacy mode or disabled storage).
+                }
+            }
+
+            function generateProfileId() {
+                const prefix = 'user-';
+                const bytes = new Uint8Array(6);
+                if (window.crypto && window.crypto.getRandomValues) {
+                    window.crypto.getRandomValues(bytes);
+                } else {
+                    for (let index = 0; index < bytes.length; index += 1) {
+                        bytes[index] = Math.floor(Math.random() * 256);
+                    }
+                }
+                const suffix = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+                return `${prefix}${suffix}`;
+            }
+
+            function resolveProfileId(options = {}) {
+                const { createIfMissing = false } = options;
+                if (profileStatus && profileStatus.profileId) {
+                    if (profileStatus.profileId !== persistedProfileId) {
+                        persistProfileId(profileStatus.profileId);
+                    }
+                    return profileStatus.profileId;
+                }
+                if (persistedProfileId) {
+                    return persistedProfileId;
+                }
+                if (!createIfMissing) {
+                    return '';
+                }
+                const generated = generateProfileId();
+                persistProfileId(generated);
+                return generated;
+            }
+
             openrouterModel.value = defaults.openrouterModel || '';
             metadataAddonInput.value = defaults.metadataAddon || '';
             catalogSlider.value = defaults.catalogCount || catalogSlider.min || 1;
@@ -792,6 +869,7 @@ CONFIG_TEMPLATE = dedent(
                 if (!profileId) {
                     return null;
                 }
+                persistProfileId(profileId);
                 const historyLimit = Number(raw.traktHistoryLimit);
                 const historyRaw = raw.traktHistory && typeof raw.traktHistory === 'object' ? raw.traktHistory : {};
                 const normaliseCount = (value) => {
@@ -891,8 +969,11 @@ CONFIG_TEMPLATE = dedent(
                 const { includeProfileId = true } = options;
                 const payload = {};
                 const settings = collectManifestSettings();
-                if (includeProfileId && profileStatus && profileStatus.profileId) {
-                    payload.profileId = profileStatus.profileId;
+                if (includeProfileId) {
+                    const profileId = resolveProfileId({ createIfMissing: true });
+                    if (profileId) {
+                        payload.profileId = profileId;
+                    }
                 }
                 if (settings.openrouterKey) payload.openrouterKey = settings.openrouterKey;
                 if (settings.openrouterModel) payload.openrouterModel = settings.openrouterModel;
@@ -911,8 +992,11 @@ CONFIG_TEMPLATE = dedent(
             function buildProfileQuery(options = {}) {
                 const { includeProfileId = true, includeConfig = false } = options;
                 const params = new URLSearchParams();
-                if (includeProfileId && profileStatus && profileStatus.profileId) {
-                    params.set('profileId', profileStatus.profileId);
+                if (includeProfileId) {
+                    const profileId = resolveProfileId({ createIfMissing: true });
+                    if (profileId) {
+                        params.set('profileId', profileId);
+                    }
                 }
                 if (includeConfig) {
                     const settings = collectManifestSettings();
@@ -1014,8 +1098,9 @@ CONFIG_TEMPLATE = dedent(
                 const url = new URL(baseManifestUrl);
                 url.search = '';
                 const settings = collectManifestSettings();
-                if (profileStatus && profileStatus.profileId) {
-                    const encodedProfileId = encodeURIComponent(profileStatus.profileId);
+                const activeProfileId = resolveProfileId({ createIfMissing: false });
+                if (activeProfileId) {
+                    const encodedProfileId = encodeURIComponent(activeProfileId);
                     url.pathname = `/profiles/${encodedProfileId}/manifest.json`;
                     return url.toString();
                 }
