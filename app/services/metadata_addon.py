@@ -1,4 +1,4 @@
-"""Helper client for fetching metadata from Cinemeta."""
+"""Helper client for fetching metadata from Cinemeta-compatible add-ons."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
-class CinemetaMatch:
-    """Represents the useful fields returned from a Cinemeta search."""
+class MetadataMatch:
+    """Represents the useful fields returned from a metadata lookup."""
 
     id: str
     title: str
@@ -27,7 +27,7 @@ class CinemetaMatch:
     background: str | None = None
 
 
-class CinemetaClient:
+class MetadataAddonClient:
     """Wrapper around Cinemeta-compatible catalog search endpoints."""
 
     _SEARCH_PATH = "/catalog/{type}/top/search={query}.json"
@@ -54,8 +54,8 @@ class CinemetaClient:
         content_type: str,
         year: int | None = None,
         base_url: str | None = None,
-    ) -> CinemetaMatch | None:
-        """Return the best Cinemeta match for the given title/year."""
+    ) -> MetadataMatch | None:
+        """Return the best metadata match for the given title/year."""
 
         normalized_title = (title or "").strip()
         if not normalized_title:
@@ -86,7 +86,7 @@ class CinemetaClient:
                     await asyncio.sleep(0.1)
                     continue
                 logger.warning(
-                    "Cinemeta lookup failed for %s via %s: %s",
+                    "Metadata add-on lookup failed for %s via %s: %s",
                     normalized_title,
                     effective_base,
                     exc,
@@ -94,7 +94,7 @@ class CinemetaClient:
                 return None
             except httpx.HTTPError as exc:
                 logger.warning(
-                    "Cinemeta lookup failed for %s via %s: %s",
+                    "Metadata add-on lookup failed for %s via %s: %s",
                     normalized_title,
                     effective_base,
                     exc,
@@ -119,7 +119,7 @@ class CinemetaClient:
         if not match_id:
             return None
 
-        return CinemetaMatch(
+        return MetadataMatch(
             id=match_id,
             title=str(match.get("name") or normalized_title),
             type=str(match.get("type") or content_type),

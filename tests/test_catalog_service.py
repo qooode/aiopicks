@@ -11,7 +11,7 @@ from app.config import Settings
 from app.database import Database
 from app.db_models import CatalogRecord, Profile
 from app.models import Catalog, CatalogItem
-from app.services.cinemeta import CinemetaClient
+from app.services.metadata_addon import MetadataAddonClient, MetadataMatch
 from app.services.catalog_generator import CatalogService
 from app.services.catalog_generator import ProfileState, ProfileStatus
 from app.services.openrouter import OpenRouterClient
@@ -34,7 +34,7 @@ def test_default_profile_skipped_without_api_key(tmp_path) -> None:
             settings,
             cast(TraktClient, object()),
             cast(OpenRouterClient, object()),
-            cast(CinemetaClient, object()),
+            cast(MetadataAddonClient, object()),
             database.session_factory,
         )
 
@@ -127,7 +127,7 @@ def test_profile_id_inferred_from_catalog_id() -> None:
         settings,
         cast(TraktClient, object()),
         cast(OpenRouterClient, object()),
-        cast(CinemetaClient, object()),
+        cast(MetadataAddonClient, object()),
         cast(Database, object()),  # session factory not needed for this test
     )
 
@@ -152,7 +152,7 @@ def test_profile_id_uses_trakt_slug() -> None:
         settings,
         cast(TraktClient, DummyTrakt()),
         cast(OpenRouterClient, object()),
-        cast(CinemetaClient, object()),
+        cast(MetadataAddonClient, object()),
         cast(Database, object()),
     )
 
@@ -181,7 +181,7 @@ def test_profile_id_ignores_default_hint_when_trakt_present() -> None:
         settings,
         cast(TraktClient, DummyTrakt()),
         cast(OpenRouterClient, object()),
-        cast(CinemetaClient, object()),
+        cast(MetadataAddonClient, object()),
         cast(Database, object()),
     )
 
@@ -213,7 +213,7 @@ def test_profile_id_hashes_trakt_token_when_slug_missing() -> None:
         settings,
         cast(TraktClient, DummyTrakt()),
         cast(OpenRouterClient, object()),
-        cast(CinemetaClient, object()),
+        cast(MetadataAddonClient, object()),
         cast(Database, object()),
     )
 
@@ -244,7 +244,7 @@ def test_resolve_profile_persists_trakt_display_name(tmp_path) -> None:
             settings,
             cast(TraktClient, DummyTrakt()),
             cast(OpenRouterClient, object()),
-            cast(CinemetaClient, object()),
+            cast(MetadataAddonClient, object()),
             database.session_factory,
         )
 
@@ -278,7 +278,7 @@ def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:
             settings,
             cast(TraktClient, object()),
             cast(OpenRouterClient, object()),
-            cast(CinemetaClient, object()),
+            cast(MetadataAddonClient, object()),
             database.session_factory,
         )
 
@@ -373,7 +373,7 @@ def test_metadata_addon_url_persisted(tmp_path) -> None:
             settings,
             cast(TraktClient, object()),
             cast(OpenRouterClient, object()),
-            cast(CinemetaClient, object()),
+            cast(MetadataAddonClient, object()),
             database.session_factory,
         )
 
@@ -409,7 +409,7 @@ def test_history_limit_persisted(tmp_path) -> None:
             settings,
             cast(TraktClient, object()),
             cast(OpenRouterClient, object()),
-            cast(CinemetaClient, object()),
+            cast(MetadataAddonClient, object()),
             database.session_factory,
         )
 
@@ -504,7 +504,7 @@ def test_serialise_watched_index_filters_empty_entries() -> None:
     assert payload["movie"]["recent_titles"] == ["Another Film (2021)"]
 
 
-def test_cinemeta_lookup_retries_on_402() -> None:
+def test_metadata_lookup_retries_on_402() -> None:
     """HTTP 402 responses trigger a short retry before giving up."""
 
     async def runner() -> None:
@@ -533,8 +533,8 @@ def test_cinemeta_lookup_retries_on_402() -> None:
 
         transport = httpx.MockTransport(handler)
         async with httpx.AsyncClient(transport=transport) as client:
-            cinemeta = CinemetaClient(client, "https://example.com")
-            match = await cinemeta.lookup(
+            metadata_client = MetadataAddonClient(client, "https://example.com")
+            match = await metadata_client.lookup(
                 "Hinamatsuri", content_type="series", year=2018
             )
 
@@ -545,11 +545,11 @@ def test_cinemeta_lookup_retries_on_402() -> None:
     asyncio.run(runner())
 
 
-def test_catalog_items_removed_when_cinemeta_missing() -> None:
-    """Items without Cinemeta metadata are dropped from catalogs."""
+def test_catalog_items_removed_when_metadata_missing() -> None:
+    """Items without metadata add-on results are dropped from catalogs."""
 
     async def runner() -> None:
-        class DummyCinemeta:
+        class DummyMetadataAddon:
             default_base_url = "https://example.com"
 
             def __init__(self) -> None:
@@ -562,17 +562,17 @@ def test_catalog_items_removed_when_cinemeta_missing() -> None:
                 content_type: str,
                 year: int | None = None,
                 base_url: str | None = None,
-            ) -> CinemetaMatch | None:
+            ) -> MetadataMatch | None:
                 self.calls.append((title, content_type, year))
                 return None
 
-        cinemeta = DummyCinemeta()
+        metadata_client = DummyMetadataAddon()
         settings = Settings(_env_file=None)
         service = CatalogService(
             settings,
             cast(TraktClient, object()),
             cast(OpenRouterClient, object()),
-            cast(CinemetaClient, cinemeta),
+            cast(MetadataAddonClient, metadata_client),
             cast(Database, object()),
         )
 
@@ -593,11 +593,13 @@ def test_catalog_items_removed_when_cinemeta_missing() -> None:
         )
 
         catalogs = {"movie": {catalog.id: catalog}, "series": {}}
-        await service._enrich_catalogs_with_cinemeta(catalogs, metadata_addon_url=None)
+        await service._enrich_catalogs_with_metadata(
+            catalogs, metadata_addon_url=None
+        )
 
         updated_items = catalogs["movie"][catalog.id].items
         assert [item.title for item in updated_items] == ["Already Good"]
-        assert cinemeta.calls == [("Needs Help", "movie", None)]
+        assert metadata_client.calls == [("Needs Help", "movie", None)]
 
     asyncio.run(runner())
 
