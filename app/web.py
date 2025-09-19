@@ -794,9 +794,69 @@ CONFIG_TEMPLATE = dedent(
                 }
                 const historyLimit = Number(raw.traktHistoryLimit);
                 const historyRaw = raw.traktHistory && typeof raw.traktHistory === 'object' ? raw.traktHistory : {};
-                const moviesWatched = Number(historyRaw.movies);
-                const showsWatched = Number(historyRaw.shows);
+                const normaliseCount = (value) => {
+                    const numeric = Number(value);
+                    return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+                };
+                const moviesWatched = normaliseCount(historyRaw.movies);
+                const showsWatched = normaliseCount(historyRaw.shows);
                 const refreshedAt = typeof historyRaw.refreshedAt === 'string' ? historyRaw.refreshedAt : '';
+                const statsRaw = historyRaw.stats && typeof historyRaw.stats === 'object' ? historyRaw.stats : {};
+                const movieStatsRaw = statsRaw.movies && typeof statsRaw.movies === 'object' ? statsRaw.movies : {};
+                const showStatsRaw = statsRaw.shows && typeof statsRaw.shows === 'object' ? statsRaw.shows : {};
+                const episodeStatsRaw = statsRaw.episodes && typeof statsRaw.episodes === 'object' ? statsRaw.episodes : {};
+                const totalMinutesRaw = statsRaw.totalMinutes ?? (
+                    statsRaw.totals && typeof statsRaw.totals === 'object' ? statsRaw.totals.minutes : undefined
+                );
+                const stats = {
+                    movies: {
+                        watched: normaliseCount(movieStatsRaw.watched),
+                        plays: normaliseCount(movieStatsRaw.plays),
+                        minutes: normaliseCount(movieStatsRaw.minutes),
+                    },
+                    shows: {
+                        watched: normaliseCount(showStatsRaw.watched),
+                    },
+                    episodes: {
+                        watched: normaliseCount(episodeStatsRaw.watched),
+                        plays: normaliseCount(episodeStatsRaw.plays),
+                        minutes: normaliseCount(episodeStatsRaw.minutes),
+                    },
+                    totalMinutes: normaliseCount(totalMinutesRaw),
+                };
+                const hasStats = [
+                    stats.movies.watched,
+                    stats.movies.plays,
+                    stats.movies.minutes,
+                    stats.shows.watched,
+                    stats.episodes.watched,
+                    stats.episodes.plays,
+                    stats.episodes.minutes,
+                    stats.totalMinutes,
+                ].some((value) => Number.isFinite(value) && value > 0);
+                const history = {
+                    movies: moviesWatched,
+                    shows: showsWatched,
+                    refreshedAt,
+                };
+                if (hasStats) {
+                    const normalisedStats = {};
+                    if (stats.movies.watched || stats.movies.plays || stats.movies.minutes) {
+                        normalisedStats.movies = stats.movies;
+                    }
+                    if (stats.shows.watched) {
+                        normalisedStats.shows = stats.shows;
+                    }
+                    if (stats.episodes.watched || stats.episodes.plays || stats.episodes.minutes) {
+                        normalisedStats.episodes = stats.episodes;
+                    }
+                    if (stats.totalMinutes) {
+                        normalisedStats.totalMinutes = stats.totalMinutes;
+                    }
+                    if (Object.keys(normalisedStats).length > 0) {
+                        history.stats = normalisedStats;
+                    }
+                }
                 return {
                     profileId,
                     hasCatalogs: Boolean(raw.hasCatalogs),
@@ -809,11 +869,7 @@ CONFIG_TEMPLATE = dedent(
                         ? raw.metadataAddon.trim()
                         : '',
                     traktHistoryLimit: Number.isFinite(historyLimit) && historyLimit > 0 ? historyLimit : 0,
-                    traktHistory: {
-                        movies: Number.isFinite(moviesWatched) && moviesWatched > 0 ? moviesWatched : 0,
-                        shows: Number.isFinite(showsWatched) && showsWatched > 0 ? showsWatched : 0,
-                        refreshedAt,
-                    },
+                    traktHistory: history,
                 };
             }
 
@@ -1052,6 +1108,31 @@ CONFIG_TEMPLATE = dedent(
                 return `${seconds} seconds`;
             }
 
+            function formatDurationMinutes(totalMinutes) {
+                if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) {
+                    return '';
+                }
+                const rounded = Math.round(totalMinutes);
+                const minutesPerDay = 24 * 60;
+                const days = Math.floor(rounded / minutesPerDay);
+                const hours = Math.floor((rounded % minutesPerDay) / 60);
+                const minutes = rounded % 60;
+                const parts = [];
+                if (days) {
+                    parts.push(`${days}d`);
+                }
+                if (hours) {
+                    parts.push(`${hours}h`);
+                }
+                if (minutes) {
+                    parts.push(`${minutes}m`);
+                }
+                if (parts.length === 0) {
+                    return `${rounded}m`;
+                }
+                return parts.join(' ');
+            }
+
             function updateTraktUi() {
                 const connected = Boolean(traktAuth.accessToken);
                 traktLoginButton.classList.toggle('hidden', !traktLoginAvailable || connected);
@@ -1075,30 +1156,70 @@ CONFIG_TEMPLATE = dedent(
                     return;
                 }
                 const history = profileStatus.traktHistory || {};
-                const movies = Number(history.movies) || 0;
-                const shows = Number(history.shows) || 0;
+                const toCount = (value) => {
+                    const numeric = Number(value);
+                    return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+                };
+                const movies = toCount(history.movies);
+                const shows = toCount(history.shows);
                 traktStatsMovies.textContent = numberFormatter.format(movies);
                 traktStatsShows.textContent = numberFormatter.format(shows);
+                const stats = history.stats && typeof history.stats === 'object' ? history.stats : null;
+                const movieStats = stats && typeof stats.movies === 'object' ? stats.movies : {};
+                const episodeStats = stats && typeof stats.episodes === 'object' ? stats.episodes : {};
+                let totalMinutes = toCount(stats && typeof stats.totalMinutes !== 'undefined' ? stats.totalMinutes : 0);
+                const moviePlays = toCount(movieStats && typeof movieStats.plays !== 'undefined' ? movieStats.plays : 0);
+                const movieMinutes = toCount(movieStats && typeof movieStats.minutes !== 'undefined' ? movieStats.minutes : 0);
+                const episodesWatched = toCount(episodeStats && typeof episodeStats.watched !== 'undefined' ? episodeStats.watched : 0);
+                const episodePlays = toCount(episodeStats && typeof episodeStats.plays !== 'undefined' ? episodeStats.plays : 0);
+                const episodeMinutes = toCount(episodeStats && typeof episodeStats.minutes !== 'undefined' ? episodeStats.minutes : 0);
+                if (!totalMinutes && (movieMinutes || episodeMinutes)) {
+                    totalMinutes = movieMinutes + episodeMinutes;
+                }
                 let summaryLimit = Number(profileStatus.traktHistoryLimit) || 0;
                 if (historyLimitTouched) {
                     summaryLimit = Number(historySlider.value) || summaryLimit;
                 } else if (!summaryLimit) {
                     summaryLimit = Number(historySlider.value);
                 }
-                if (Number.isFinite(summaryLimit) && summaryLimit > 0) {
-                    traktStatsSummary.textContent = `Filtering repeats from your latest ${numberFormatter.format(Math.round(summaryLimit))} plays.`;
-                } else {
-                    traktStatsSummary.textContent = '';
+                const summaryParts = [];
+                if (movies > 0) {
+                    let movieLabel = `${numberFormatter.format(movies)} movies`;
+                    if (moviePlays > 0 && moviePlays !== movies) {
+                        movieLabel += ` (${numberFormatter.format(moviePlays)} plays)`;
+                    }
+                    summaryParts.push(movieLabel);
                 }
+                if (shows > 0 && episodesWatched > 0) {
+                    let showLabel = `${numberFormatter.format(episodesWatched)} episodes across ${numberFormatter.format(shows)} shows`;
+                    if (episodePlays > 0 && episodePlays !== episodesWatched) {
+                        showLabel += ` (${numberFormatter.format(episodePlays)} plays)`;
+                    }
+                    summaryParts.push(showLabel);
+                } else if (shows > 0) {
+                    summaryParts.push(`${numberFormatter.format(shows)} shows`);
+                }
+                const summaryMessages = [];
+                if (summaryParts.length > 0) {
+                    summaryMessages.push(`Lifetime stats: ${summaryParts.join(' · ')}.`);
+                }
+                if (Number.isFinite(summaryLimit) && summaryLimit > 0) {
+                    summaryMessages.push(`Filtering repeats from your latest ${numberFormatter.format(Math.round(summaryLimit))} plays.`);
+                }
+                traktStatsSummary.textContent = summaryMessages.join(' ');
                 const refreshedAt = typeof history.refreshedAt === 'string' ? history.refreshedAt : '';
+                const updatedParts = [];
                 if (refreshedAt) {
                     const refreshedDate = new Date(refreshedAt);
-                    traktStatsUpdated.textContent = Number.isNaN(refreshedDate.getTime())
-                        ? ''
-                        : `Synced ${refreshedDate.toLocaleString()}.`;
-                } else {
-                    traktStatsUpdated.textContent = '';
+                    if (!Number.isNaN(refreshedDate.getTime())) {
+                        updatedParts.push(`Synced ${refreshedDate.toLocaleString()}.`);
+                    }
                 }
+                const durationText = formatDurationMinutes(totalMinutes);
+                if (durationText) {
+                    updatedParts.push(`All-time watch time ${durationText}.`);
+                }
+                traktStatsUpdated.textContent = updatedParts.join(' ');
                 traktStatsBlock.classList.remove('hidden');
             }
 

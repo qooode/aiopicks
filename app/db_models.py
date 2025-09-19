@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -26,6 +27,9 @@ class Profile(Base):
     trakt_show_history_count: Mapped[int] = mapped_column(Integer, default=0)
     trakt_history_refreshed_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True
+    )
+    trakt_history_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True
     )
     catalog_count: Mapped[int] = mapped_column(Integer, default=6)
     catalog_item_count: Mapped[int] = mapped_column(Integer, default=8)
