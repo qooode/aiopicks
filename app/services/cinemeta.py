@@ -72,17 +72,35 @@ class CinemetaClient:
         )
         url = f"{effective_base}{path}"
 
-        try:
-            async with self._semaphore:
-                response = await self._client.get(url)
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            logger.warning(
-                "Cinemeta lookup failed for %s via %s: %s",
-                normalized_title,
-                effective_base,
-                exc,
-            )
+        response: httpx.Response | None = None
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            try:
+                async with self._semaphore:
+                    response = await self._client.get(url)
+                response.raise_for_status()
+                break
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code if exc.response else None
+                if status == 402 and attempt < max_attempts:
+                    await asyncio.sleep(0.1)
+                    continue
+                logger.warning(
+                    "Cinemeta lookup failed for %s via %s: %s",
+                    normalized_title,
+                    effective_base,
+                    exc,
+                )
+                return None
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "Cinemeta lookup failed for %s via %s: %s",
+                    normalized_title,
+                    effective_base,
+                    exc,
+                )
+                return None
+        else:
             return None
 
         payload = response.json()

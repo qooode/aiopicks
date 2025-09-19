@@ -894,18 +894,19 @@ class CatalogService:
                 continue
             matches[key] = result
 
-        if not matches:
-            return
-
+        looked_up_keys = set(lookup_tasks.keys())
         for catalog_map in catalogs.values():
             for catalog_id, catalog in list(catalog_map.items()):
                 updated_items: list[CatalogItem] = []
                 for item in catalog.items:
                     title = (item.title or "").strip()
                     if not title:
-                        updated_items.append(item)
+                        if item.imdb_id and item.poster:
+                            updated_items.append(item)
                         continue
                     key = (item.type, title.casefold(), item.year)
+                    if key in looked_up_keys and key not in matches:
+                        continue
                     match = matches.get(key)
                     if match is None:
                         updated_items.append(item)

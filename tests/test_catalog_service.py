@@ -5,6 +5,8 @@ import hashlib
 from datetime import datetime, timedelta
 from typing import cast
 
+import httpx
+
 from app.config import Settings
 from app.database import Database
 from app.db_models import CatalogRecord, Profile
@@ -500,4 +502,102 @@ def test_serialise_watched_index_filters_empty_entries() -> None:
         "movie:title:another film:2021",
     }
     assert payload["movie"]["recent_titles"] == ["Another Film (2021)"]
+
+
+def test_cinemeta_lookup_retries_on_402() -> None:
+    """HTTP 402 responses trigger a short retry before giving up."""
+
+    async def runner() -> None:
+        call_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return httpx.Response(402, request=request)
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "metas": [
+                        {
+                            "name": "Hinamatsuri",
+                            "type": "series",
+                            "id": "tt8076356",
+                            "releaseInfo": "2018",
+                            "poster": "https://example.com/poster.jpg",
+                        }
+                    ]
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            cinemeta = CinemetaClient(client, "https://example.com")
+            match = await cinemeta.lookup(
+                "Hinamatsuri", content_type="series", year=2018
+            )
+
+        assert match is not None
+        assert match.id == "tt8076356"
+        assert call_count == 2
+
+    asyncio.run(runner())
+
+
+def test_catalog_items_removed_when_cinemeta_missing() -> None:
+    """Items without Cinemeta metadata are dropped from catalogs."""
+
+    async def runner() -> None:
+        class DummyCinemeta:
+            default_base_url = "https://example.com"
+
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str, int | None]] = []
+
+            async def lookup(
+                self,
+                title: str,
+                *,
+                content_type: str,
+                year: int | None = None,
+                base_url: str | None = None,
+            ) -> CinemetaMatch | None:
+                self.calls.append((title, content_type, year))
+                return None
+
+        cinemeta = DummyCinemeta()
+        settings = Settings(_env_file=None)
+        service = CatalogService(
+            settings,
+            cast(TraktClient, object()),
+            cast(OpenRouterClient, object()),
+            cast(CinemetaClient, cinemeta),
+            cast(Database, object()),
+        )
+
+        catalog = Catalog(
+            id="aiopicks-movie-test",
+            type="movie",
+            title="Test Catalog",
+            items=[
+                CatalogItem(title="Needs Help", type="movie"),
+                CatalogItem(
+                    title="Already Good",
+                    type="movie",
+                    imdb_id="tt0111161",
+                    poster="https://example.com/poster.jpg",
+                ),
+            ],
+            generated_at=datetime.utcnow(),
+        )
+
+        catalogs = {"movie": {catalog.id: catalog}, "series": {}}
+        await service._enrich_catalogs_with_cinemeta(catalogs, metadata_addon_url=None)
+
+        updated_items = catalogs["movie"][catalog.id].items
+        assert [item.title for item in updated_items] == ["Already Good"]
+        assert cinemeta.calls == [("Needs Help", "movie", None)]
+
+    asyncio.run(runner())
 
