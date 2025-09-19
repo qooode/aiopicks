@@ -45,18 +45,25 @@ async def lifespan(_: FastAPI):
             timeout=httpx.Timeout(60.0, connect=10.0),
         )
     )
+    cinemeta_client_kwargs: dict[str, Any] = {
+        "timeout": httpx.Timeout(15.0, connect=5.0)
+    }
+    if settings.metadata_addon_url:
+        cinemeta_client_kwargs["base_url"] = str(settings.metadata_addon_url)
     cinemeta_http_client = await exit_stack.enter_async_context(
-        httpx.AsyncClient(
-            base_url=str(settings.cinemeta_api_url),
-            timeout=httpx.Timeout(15.0, connect=5.0),
-        )
+        httpx.AsyncClient(**cinemeta_client_kwargs)
     )
     database = Database(settings.database_url)
     await database.create_all()
 
     trakt = TraktClient(settings, trakt_client)
     openrouter = OpenRouterClient(settings, openrouter_client)
-    cinemeta = CinemetaClient(settings, cinemeta_http_client)
+    default_metadata_addon = (
+        str(settings.metadata_addon_url)
+        if settings.metadata_addon_url is not None
+        else None
+    )
+    cinemeta = CinemetaClient(cinemeta_http_client, default_metadata_addon)
     catalog_service = CatalogService(
         settings, trakt, openrouter, cinemeta, database.session_factory
     )

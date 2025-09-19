@@ -25,6 +25,7 @@ class Profile(Base):
     catalog_item_count: Mapped[int] = mapped_column(Integer, default=8)
     refresh_interval_seconds: Mapped[int] = mapped_column(Integer, default=43_200)
     response_cache_seconds: Mapped[int] = mapped_column(Integer, default=1_800)
+    metadata_addon_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     next_refresh_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

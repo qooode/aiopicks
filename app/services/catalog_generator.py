@@ -11,7 +11,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Mapping
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    HttpUrl,
+    ValidationError,
+    field_validator,
+)
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -78,6 +85,14 @@ class ManifestConfig(BaseModel):
         default=None,
         validation_alias=AliasChoices("traktAccessToken", "traktToken"),
     )
+    metadata_addon_url: HttpUrl | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "metadataAddon",
+            "metadataAddonUrl",
+            "cinemetaUrl",
+        ),
+    )
 
     @classmethod
     def from_query(cls, params: Mapping[str, str]) -> "ManifestConfig":
@@ -117,6 +132,7 @@ class ManifestConfig(BaseModel):
         "manifest_name",
         "trakt_client_id",
         "trakt_access_token",
+        "metadata_addon_url",
         mode="before",
     )
     @classmethod
@@ -144,6 +160,7 @@ class ProfileState:
     response_cache_seconds: int
     next_refresh_at: datetime | None
     last_refreshed_at: datetime | None
+    metadata_addon_url: str | None = None
 
 
 @dataclass
@@ -171,6 +188,7 @@ class ProfileStatus:
             "catalogItemCount": self.state.catalog_item_count,
             "refreshIntervalSeconds": self.state.refresh_interval_seconds,
             "responseCacheSeconds": self.state.response_cache_seconds,
+            "metadataAddon": self.state.metadata_addon_url,
             "lastRefreshedAt": (
                 self.state.last_refreshed_at.isoformat() if self.state.last_refreshed_at else None
             ),
@@ -202,6 +220,9 @@ class CatalogService:
         self._ai = openrouter_client
         self._cinemeta = cinemeta_client
         self._session_factory = session_factory
+        self._default_metadata_addon_url = getattr(
+            cinemeta_client, "default_base_url", None
+        )
         self._locks: dict[str, asyncio.Lock] = {}
         self._refresh_task: asyncio.Task[None] | None = None
         self._refresh_poll_seconds = 60
@@ -398,6 +419,7 @@ class CatalogService:
         )
         seed = secrets.token_hex(4)
         catalogs: dict[str, dict[str, Catalog]] | None = None
+        metadata_url = state.metadata_addon_url or self._default_metadata_addon_url
 
         try:
             bundle = await self._ai.generate_catalogs(
@@ -407,7 +429,7 @@ class CatalogService:
                 model=state.openrouter_model,
             )
             catalogs = self._bundle_to_dict(bundle)
-            await self._enrich_catalogs_with_cinemeta(catalogs)
+            await self._enrich_catalogs_with_cinemeta(catalogs, metadata_url)
             if not (catalogs["movie"] or catalogs["series"]):
                 logger.warning(
                     "AI returned an empty catalog bundle for profile %s; falling back to history",
@@ -429,7 +451,7 @@ class CatalogService:
                 seed=seed,
                 item_limit=state.catalog_item_count,
             )
-            await self._enrich_catalogs_with_cinemeta(catalogs)
+            await self._enrich_catalogs_with_cinemeta(catalogs, metadata_url)
 
         await self._store_catalogs(state, catalogs)
 
@@ -513,6 +535,7 @@ class CatalogService:
             response_cache_seconds=profile.response_cache_seconds,
             next_refresh_at=profile.next_refresh_at,
             last_refreshed_at=profile.last_refreshed_at,
+            metadata_addon_url=getattr(profile, "metadata_addon_url", None),
         )
 
     async def _ensure_catalog_scope(self, state: ProfileState) -> None:
@@ -536,9 +559,15 @@ class CatalogService:
                 await session.commit()
 
     async def _enrich_catalogs_with_cinemeta(
-        self, catalogs: dict[str, dict[str, Catalog]]
+        self,
+        catalogs: dict[str, dict[str, Catalog]],
+        metadata_addon_url: str | None,
     ) -> None:
         """Populate missing identifiers and artwork by querying Cinemeta."""
+
+        effective_url = metadata_addon_url or self._default_metadata_addon_url
+        if not effective_url:
+            return
 
         lookup_tasks: dict[
             tuple[str, str, int | None], asyncio.Task[CinemetaMatch | None]
@@ -562,7 +591,10 @@ class CatalogService:
                         year: int | None = item.year,
                     ) -> CinemetaMatch | None:
                         return await self._cinemeta.lookup(
-                            title, content_type=content_type, year=year
+                            title,
+                            content_type=content_type,
+                            year=year,
+                            base_url=effective_url,
                         )
 
                     lookup_tasks[key] = asyncio.create_task(_lookup())
@@ -630,6 +662,11 @@ class CatalogService:
                 openrouter_key = config.openrouter_key or self._settings.openrouter_api_key
                 if not openrouter_key:
                     raise ValueError("An OpenRouter API key is required.")
+                metadata_addon = (
+                    str(config.metadata_addon_url)
+                    if config.metadata_addon_url is not None
+                    else self._default_metadata_addon_url
+                )
                 profile = Profile(
                     id=profile_id,
                     openrouter_api_key=openrouter_key,
@@ -643,6 +680,7 @@ class CatalogService:
                     response_cache_seconds=config.response_cache or self._settings.response_cache_seconds,
                     trakt_client_id=config.trakt_client_id or self._settings.trakt_client_id,
                     trakt_access_token=config.trakt_access_token or self._settings.trakt_access_token,
+                    metadata_addon_url=metadata_addon,
                     next_refresh_at=now,
                     last_refreshed_at=None,
                     created_at=now,
@@ -679,6 +717,11 @@ class CatalogService:
                 if config.trakt_access_token is not None and config.trakt_access_token != profile.trakt_access_token:
                     profile.trakt_access_token = config.trakt_access_token
                     refresh_required = True
+                if config.metadata_addon_url is not None:
+                    new_metadata_url = str(config.metadata_addon_url)
+                    if new_metadata_url != getattr(profile, "metadata_addon_url", None):
+                        profile.metadata_addon_url = new_metadata_url
+                        refresh_required = True
                 if profile.next_refresh_at is None:
                     profile.next_refresh_at = now
                 profile.updated_at = now
@@ -757,6 +800,7 @@ class CatalogService:
                     catalog_item_count=self._settings.catalog_item_count,
                     refresh_interval_seconds=self._settings.refresh_interval_seconds,
                     response_cache_seconds=self._settings.response_cache_seconds,
+                    metadata_addon_url=self._default_metadata_addon_url,
                     next_refresh_at=now,
                     last_refreshed_at=None,
                     created_at=now,
@@ -782,6 +826,9 @@ class CatalogService:
                     updated = True
                 if profile.response_cache_seconds != self._settings.response_cache_seconds:
                     profile.response_cache_seconds = self._settings.response_cache_seconds
+                    updated = True
+                if getattr(profile, "metadata_addon_url", None) != self._default_metadata_addon_url:
+                    profile.metadata_addon_url = self._default_metadata_addon_url
                     updated = True
                 if profile.trakt_client_id != self._settings.trakt_client_id:
                     profile.trakt_client_id = self._settings.trakt_client_id

@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, HttpUrl
+from pydantic import AliasChoices, Field, HttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -53,8 +53,10 @@ class Settings(BaseSettings):
     openrouter_api_url: HttpUrl = Field(
         default="https://openrouter.ai/api/v1", alias="OPENROUTER_API_URL"
     )
-    cinemeta_api_url: HttpUrl = Field(
-        default="https://v3-cinemeta.strem.io", alias="CINEMETA_API_URL"
+    metadata_addon_url: HttpUrl | None = Field(
+        default=None,
+        alias="METADATA_ADDON_URL",
+        validation_alias=AliasChoices("METADATA_ADDON_URL", "CINEMETA_API_URL"),
     )
 
     database_url: str = Field(
@@ -64,6 +66,12 @@ class Settings(BaseSettings):
     environment: Literal["development", "production"] = Field(
         default="development", alias="ENVIRONMENT"
     )
+
+    @property
+    def cinemeta_api_url(self) -> HttpUrl | None:
+        """Maintain backwards compatibility with the previous setting name."""
+
+        return self.metadata_addon_url
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
