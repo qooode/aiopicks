@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -246,8 +247,10 @@ class OpenRouterClient:
                     ", ".join(sorted(requests.keys())),
                 )
 
-        await _fill("movie", bundle.movie_catalogs)
-        await _fill("series", bundle.series_catalogs)
+        await asyncio.gather(
+            _fill("movie", bundle.movie_catalogs),
+            _fill("series", bundle.series_catalogs),
+        )
 
     def _prepare_top_up_requests(
         self,
