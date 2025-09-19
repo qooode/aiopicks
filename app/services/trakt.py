@@ -195,12 +195,53 @@ class TraktClient:
         def top_values(counter: Counter[str]) -> list[tuple[str, int]]:
             return counter.most_common(5)
 
+        def fatigued_values(counter: Counter[str]) -> list[str]:
+            if not history:
+                return []
+            threshold = max(3, len(history) // 5)
+            fatigued: list[str] = []
+            for value, count in counter.most_common():
+                if count < threshold:
+                    break
+                if value:
+                    fatigued.append(value)
+                if len(fatigued) >= 5:
+                    break
+            return fatigued
+
+        def curiosity_values(counter: Counter[str], *, fatigued: set[str]) -> list[str]:
+            if not history:
+                return []
+            ranked = sorted(
+                ((value, count) for value, count in counter.items() if value),
+                key=lambda item: (item[1], item[0]),
+            )
+            picks: list[str] = []
+            for value, count in ranked:
+                if count <= 0 or value in fatigued:
+                    continue
+                picks.append(value)
+                if len(picks) >= 5:
+                    break
+            return picks
+
+        fatigued_genre_list = fatigued_values(genres)
+        fatigued_language_list = fatigued_values(languages)
+
         return {
             "total": len(history),
             "top_titles": titles[:20],
             "top_genres": top_values(genres),
             "top_countries": top_values(countries),
             "top_languages": top_values(languages),
+            "fatigued_genres": fatigued_genre_list,
+            "fatigued_languages": fatigued_language_list,
+            "curiosity_genres": curiosity_values(
+                genres, fatigued=set(fatigued_genre_list)
+            ),
+            "curiosity_languages": curiosity_values(
+                languages, fatigued=set(fatigued_language_list)
+            ),
             "average_runtime": sum(runtimes) // len(runtimes) if runtimes else None,
             "last_watched_at": latest_watch.isoformat() if latest_watch else None,
         }
