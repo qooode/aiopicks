@@ -39,8 +39,9 @@ Instructions:
 5. Craft each catalog title as a premium streaming row tailored to this profile—reference the viewer's top genres, languages, or recent watches so it feels handpicked.
 6. Vary the title voice so every row feels surprising and bespoke; avoid recycled phrasing, marketing clichés, and never begin a title with "Your" or another possessive pronoun.
 7. Write titles in natural sentence case (capitalize the first word and proper nouns only), keeping the rest lower-case unless grammar requires otherwise.
-8. Balance comfort picks (known favorites) with 30% exploratory discoveries, highlighting why each row will delight this viewer.
-9. For each item include only its real title, type, release year, and a concise description. Do not invent IDs, posters, or runtimes—the server enriches entries with Cinemeta.
+8. Treat the viewer's history as inspiration, not a shopping list—avoid repeating titles mentioned above unless a sequel or continuation is essential, and spotlight why each new pick connects to their tastes.
+9. Lean into discovery: ensure at least 60% of every catalog consists of fresh-to-viewer surprises rather than comfort rewatches.
+10. For each item include only its real title, type, release year, and a concise description. Do not invent IDs, posters, or runtimes—the server enriches entries with Cinemeta.
 
 Respond with JSON using this structure:
 {{
