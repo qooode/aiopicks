@@ -36,8 +36,8 @@ Instructions:
 2. Use the random seed `{seed}` to introduce surprise (shuffle titles, invent novel themes).
 3. Each catalog must include EXACTLY {items_per_catalog} strong picks with real titles and release years.
 4. Keep each description to a single crisp sentence (max ~16 words) to conserve tokens, even when {items_per_catalog} is large.
-5. Craft each catalog title as a premium streaming row tailored to this profile—reference the viewer's top genres, languages, or recent watches so it feels handpicked.
-6. Vary the title voice so every row feels surprising and bespoke; avoid recycled phrasing, marketing clichés, and never begin a title with "Your" or another possessive pronoun.
+5. Craft each catalog title as a personal nod to this viewer—reference their standout genres, languages, or recent watches so it feels like a friend calling back to their queue.
+6. Keep the titles confident and conversational without using tentative phrasing like "you may", "you might", or stock prompts like "discover". Vary the structure so no two titles recycle the same cadence, and never begin a title with "Your" or another possessive pronoun.
 7. Write titles in natural sentence case (capitalize the first word and proper nouns only), keeping the rest lower-case unless grammar requires otherwise.
 8. Treat the viewer's history as inspiration, not a shopping list—avoid repeating titles mentioned above unless a sequel or continuation is essential, and spotlight why each new pick connects to their tastes.
 9. Lean into discovery: ensure at least 60% of every catalog consists of fresh-to-viewer surprises rather than comfort rewatches.
