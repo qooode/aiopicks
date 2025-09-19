@@ -117,7 +117,13 @@ def register_routes(fastapi_app: FastAPI) -> None:
     ) -> dict[str, Any]:
         service = get_catalog_service(fastapi_app)
         try:
-            payload = dict(request.query_params)
+            query_params = dict(request.query_params)
+            if query_params:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Query parameters are not supported for manifest overrides.",
+                )
+            payload: dict[str, str] = {}
             if extra_params:
                 payload.update(extra_params)
             config = ManifestConfig.from_request(payload, profile_id=profile_id)
