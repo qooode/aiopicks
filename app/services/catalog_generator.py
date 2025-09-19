@@ -184,6 +184,14 @@ class ProfileContext:
 
 
 @dataclass
+class ProfileIdentity:
+    """Lightweight identity information for a profile."""
+
+    id: str
+    display_name: str | None = None
+
+
+@dataclass
 class ProfileStatus:
     """Expose runtime information about a profile for the config UI."""
 
@@ -918,8 +926,31 @@ class CatalogService:
                     update={"items": updated_items}
                 )
 
+    async def _derive_profile_identity(
+        self, config: ManifestConfig
+    ) -> ProfileIdentity:
+        slug = ""
+        if config.profile_id:
+            slug = slugify(config.profile_id)
+            if slug and slug != "default":
+                return ProfileIdentity(id=slug)
+
+        trakt_identity = await self._profile_id_from_trakt(config)
+        if trakt_identity is not None:
+            return trakt_identity
+
+        if slug == "default":
+            return ProfileIdentity(id="default")
+
+        if config.openrouter_key:
+            digest = hashlib.sha256(config.openrouter_key.encode("utf-8")).hexdigest()[:12]
+            return ProfileIdentity(id=f"user-{digest}")
+
+        return ProfileIdentity(id="default")
+
     async def _resolve_profile(self, config: ManifestConfig) -> ProfileContext:
-        profile_id = await self._determine_profile_id(config)
+        identity = await self._derive_profile_identity(config)
+        profile_id = identity.id
         async with self._session_factory() as session:
             profile = await session.get(Profile, profile_id)
             created = False
@@ -937,6 +968,7 @@ class CatalogService:
                 )
                 profile = Profile(
                     id=profile_id,
+                    display_name=identity.display_name,
                     openrouter_api_key=openrouter_key,
                     openrouter_model=config.openrouter_model or self._settings.openrouter_model,
                     catalog_count=config.catalog_count or self._settings.catalog_count,
@@ -962,6 +994,12 @@ class CatalogService:
                 created = True
                 refresh_required = True
             else:
+                if (
+                    identity.display_name
+                    and identity.display_name
+                    != getattr(profile, "display_name", None)
+                ):
+                    profile.display_name = identity.display_name
                 if config.openrouter_key and config.openrouter_key != profile.openrouter_api_key:
                     profile.openrouter_api_key = config.openrouter_key
                     refresh_required = True
@@ -1047,22 +1085,12 @@ class CatalogService:
         return await self._determine_profile_id(config)
 
     async def _determine_profile_id(self, config: ManifestConfig) -> str:
-        if config.profile_id:
-            slug = slugify(config.profile_id)
-            if slug:
-                return slug
+        identity = await self._derive_profile_identity(config)
+        return identity.id
 
-        trakt_profile = await self._profile_id_from_trakt(config)
-        if trakt_profile:
-            return trakt_profile
-
-        if config.openrouter_key:
-            digest = hashlib.sha256(config.openrouter_key.encode("utf-8")).hexdigest()[:12]
-            return f"user-{digest}"
-
-        return "default"
-
-    async def _profile_id_from_trakt(self, config: ManifestConfig) -> str | None:
+    async def _profile_id_from_trakt(
+        self, config: ManifestConfig
+    ) -> ProfileIdentity | None:
         access_token = config.trakt_access_token or self._settings.trakt_access_token
         if not access_token:
             return None
@@ -1077,43 +1105,59 @@ class CatalogService:
             logger.exception("Failed to fetch Trakt profile for ID derivation")
             profile = {}
 
-        candidates: list[str] = []
-        if isinstance(profile, dict):
-            ids = profile.get("ids")
-            if isinstance(ids, dict):
-                slug = ids.get("slug")
-                if isinstance(slug, str):
-                    candidates.append(slug)
-            username = profile.get("username")
-            if isinstance(username, str):
-                candidates.append(username)
-            name = profile.get("name")
-            if isinstance(name, str):
-                candidates.append(name)
-            user_section = profile.get("user")
-            if isinstance(user_section, dict):
-                nested_ids = user_section.get("ids")
-                if isinstance(nested_ids, dict):
-                    nested_slug = nested_ids.get("slug")
-                    if isinstance(nested_slug, str):
-                        candidates.append(nested_slug)
-                nested_username = user_section.get("username")
-                if isinstance(nested_username, str):
-                    candidates.append(nested_username)
-                nested_name = user_section.get("name")
-                if isinstance(nested_name, str):
-                    candidates.append(nested_name)
+        id_candidates: list[str] = []
+        display_candidates: list[str] = []
 
-        for raw_candidate in candidates:
+        def _add_candidate(container: list[str], value: object) -> None:
+            if not isinstance(value, str):
+                return
+            trimmed = value.strip()
+            if not trimmed:
+                return
+            if trimmed in container:
+                return
+            container.append(trimmed)
+
+        if isinstance(profile, Mapping):
+            ids = profile.get("ids")
+            if isinstance(ids, Mapping):
+                _add_candidate(id_candidates, ids.get("slug"))
+            _add_candidate(id_candidates, profile.get("username"))
+            _add_candidate(display_candidates, profile.get("name"))
+            _add_candidate(display_candidates, profile.get("username"))
+            user_section = profile.get("user")
+            if isinstance(user_section, Mapping):
+                nested_ids = user_section.get("ids")
+                if isinstance(nested_ids, Mapping):
+                    _add_candidate(id_candidates, nested_ids.get("slug"))
+                _add_candidate(id_candidates, user_section.get("username"))
+                _add_candidate(display_candidates, user_section.get("name"))
+                _add_candidate(display_candidates, user_section.get("username"))
+
+        fallback_display = display_candidates[0] if display_candidates else None
+        seen_slugs: set[str] = set()
+        for raw_candidate in id_candidates:
             candidate = raw_candidate.strip()
             if not candidate:
                 continue
             slug = slugify(candidate)
-            if slug and slug != "catalog":
-                return f"trakt-{slug}"
+            if not slug or slug == "catalog":
+                continue
+            if slug in seen_slugs:
+                continue
+            seen_slugs.add(slug)
+            display_name = None
+            for display in display_candidates:
+                if slugify(display) == slug:
+                    display_name = display
+                    break
+            if display_name is None:
+                display_name = fallback_display or candidate
+            return ProfileIdentity(id=f"trakt-{slug}", display_name=display_name)
 
         digest = hashlib.sha256(access_token.encode("utf-8")).hexdigest()[:12]
-        return f"trakt-{digest}"
+        display_name = fallback_display
+        return ProfileIdentity(id=f"trakt-{digest}", display_name=display_name)
 
     def profile_id_from_catalog_id(self, catalog_id: str) -> str | None:
         profile_id, _ = self._split_scoped_catalog_id(catalog_id)
