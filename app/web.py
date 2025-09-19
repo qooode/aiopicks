@@ -146,11 +146,28 @@ CONFIG_TEMPLATE = dedent(
             font-size: 0.95rem;
             cursor: pointer;
             transition: transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.6rem;
         }
         button.secondary {
             background: transparent;
             color: var(--text-primary);
             border: 1px solid var(--outline-strong);
+        }
+        button.loading {
+            cursor: progress;
+        }
+        .spinner {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border-radius: 999px;
+            border: 2px solid currentColor;
+            border-right-color: transparent;
+            animation: spin 0.8s linear infinite;
+            opacity: 0.85;
         }
         button:hover:not(:disabled) {
             transform: translateY(-1px);
@@ -217,6 +234,14 @@ CONFIG_TEMPLATE = dedent(
         }
         .hidden {
             display: none !important;
+        }
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
         }
         @media (max-width: 720px) {
             main {
@@ -289,7 +314,10 @@ CONFIG_TEMPLATE = dedent(
                     </select>
                 </div>
                 <div class="actions">
-                    <button id="prepare-profile" type="button">Generate catalogs</button>
+                    <button id="prepare-profile" type="button">
+                        <span class="spinner hidden" id="prepare-spinner" aria-hidden="true"></span>
+                        <span class="label">Generate catalogs</span>
+                    </button>
                     <button id="copy-configured-manifest" type="button" class="secondary">Copy configured manifest</button>
                     <button id="copy-default-manifest" type="button" class="secondary">Copy public manifest</button>
                 </div>
@@ -312,6 +340,8 @@ CONFIG_TEMPLATE = dedent(
             const refreshSelect = document.getElementById('config-refresh-interval');
             const cacheSelect = document.getElementById('config-cache-ttl');
             const prepareProfileButton = document.getElementById('prepare-profile');
+            const prepareSpinner = document.getElementById('prepare-spinner');
+            const prepareLabel = prepareProfileButton.querySelector('.label');
             const copyDefaultManifest = document.getElementById('copy-default-manifest');
             const copyConfiguredManifest = document.getElementById('copy-configured-manifest');
             const manifestPreview = document.getElementById('manifest-preview');
@@ -644,7 +674,16 @@ CONFIG_TEMPLATE = dedent(
 
             function updateManifestUi() {
                 const traktLocked = traktLoginAvailable && !traktAuth.accessToken;
-                prepareProfileButton.disabled = traktLocked || preparePending;
+                const generating = preparePending || Boolean(profileStatus && profileStatus.refreshing);
+                prepareProfileButton.disabled = traktLocked || generating;
+                prepareProfileButton.classList.toggle('loading', generating);
+                prepareProfileButton.setAttribute('aria-busy', generating ? 'true' : 'false');
+                if (prepareSpinner) {
+                    prepareSpinner.classList.toggle('hidden', !generating);
+                }
+                if (prepareLabel) {
+                    prepareLabel.textContent = generating ? 'Generating…' : 'Generate catalogs';
+                }
                 copyConfiguredManifest.disabled = traktLocked || !isProfileReady();
                 manifestLock.classList.toggle('hidden', !traktLoginAvailable || Boolean(traktAuth.accessToken));
             }
