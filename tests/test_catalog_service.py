@@ -195,3 +195,39 @@ def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:
 
     asyncio.run(runner())
 
+
+def test_metadata_addon_url_persisted(tmp_path) -> None:
+    """Metadata add-on URLs supplied in config are stored on the profile."""
+
+    async def runner() -> None:
+        database_path = tmp_path / "metadata.db"
+        database = Database(f"sqlite+aiosqlite:///{database_path}")
+        await database.create_all()
+
+        settings = Settings(_env_file=None)
+        service = CatalogService(
+            settings,
+            cast(TraktClient, object()),
+            cast(OpenRouterClient, object()),
+            cast(CinemetaClient, object()),
+            database.session_factory,
+        )
+
+        config = ManifestConfig.model_validate(
+            {
+                "openrouterKey": "sk-test",
+                "metadataAddon": "https://example-addon.strem.fun/manifest.json",
+            }
+        )
+        context = await service._resolve_profile(config)
+
+        assert context.state.metadata_addon_url == "https://example-addon.strem.fun/manifest.json"
+
+        loaded = await service._load_profile_state(context.state.id)
+        assert loaded is not None
+        assert loaded.metadata_addon_url == "https://example-addon.strem.fun/manifest.json"
+
+        await database.dispose()
+
+    asyncio.run(runner())
+

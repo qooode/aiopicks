@@ -10,8 +10,6 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-
-from ..config import Settings
 from ..utils import slugify
 
 logger = logging.getLogger(__name__)
@@ -30,17 +28,32 @@ class CinemetaMatch:
 
 
 class CinemetaClient:
-    """Wrapper around Cinemeta's catalog search endpoints."""
+    """Wrapper around Cinemeta-compatible catalog search endpoints."""
 
     _SEARCH_PATH = "/catalog/{type}/top/search={query}.json"
 
-    def __init__(self, settings: Settings, http_client: httpx.AsyncClient):
-        self._settings = settings
+    def __init__(
+        self,
+        http_client: httpx.AsyncClient,
+        default_base_url: str | None = None,
+    ) -> None:
         self._client = http_client
+        self._default_base_url = self._normalize_base_url(default_base_url)
         self._semaphore = asyncio.Semaphore(8)
 
+    @property
+    def default_base_url(self) -> str | None:
+        """Return the default metadata add-on URL, if configured."""
+
+        return self._default_base_url
+
     async def lookup(
-        self, title: str, *, content_type: str, year: int | None = None
+        self,
+        title: str,
+        *,
+        content_type: str,
+        year: int | None = None,
+        base_url: str | None = None,
     ) -> CinemetaMatch | None:
         """Return the best Cinemeta match for the given title/year."""
 
@@ -48,17 +61,28 @@ class CinemetaClient:
         if not normalized_title:
             return None
 
+        override_base_url = self._normalize_base_url(base_url)
+        effective_base = override_base_url or self._default_base_url
+        if not effective_base:
+            return None
+
         path = self._SEARCH_PATH.format(
             type=content_type,
             query=quote(normalized_title, safe=""),
         )
+        url = f"{effective_base}{path}"
 
         try:
             async with self._semaphore:
-                response = await self._client.get(path)
+                response = await self._client.get(url)
             response.raise_for_status()
         except httpx.HTTPError as exc:
-            logger.warning("Cinemeta lookup failed for %s: %s", normalized_title, exc)
+            logger.warning(
+                "Cinemeta lookup failed for %s via %s: %s",
+                normalized_title,
+                effective_base,
+                exc,
+            )
             return None
 
         payload = response.json()
@@ -168,3 +192,18 @@ class CinemetaClient:
         if isinstance(value, str) and value.startswith("http"):
             return value
         return None
+
+    @staticmethod
+    def _normalize_base_url(value: str | None) -> str | None:
+        if not value:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        normalized = normalized.rstrip("/")
+        lowered = normalized.lower()
+        for suffix in ("/manifest.json", "/manifest"):
+            if lowered.endswith(suffix):
+                normalized = normalized[: -len(suffix)].rstrip("/")
+                break
+        return normalized or None

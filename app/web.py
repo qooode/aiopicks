@@ -288,6 +288,10 @@ CONFIG_TEMPLATE = dedent(
                     <input id="config-openrouter-model" type="text" placeholder="google/gemini-2.5-flash-lite" />
                 </div>
                 <div class="field">
+                    <label for="config-metadata-addon">Metadata add-on URL <span class="helper">Optional – used to fetch posters and IDs</span></label>
+                    <input id="config-metadata-addon" type="text" placeholder="https://example-addon.strem.fun" inputmode="url" spellcheck="false" />
+                </div>
+                <div class="field">
                     <label for="config-catalog-count">Catalog rows <span class="range-value" id="catalog-count-value"></span></label>
                     <input id="config-catalog-count" type="range" min="1" max="12" step="1" />
                 </div>
@@ -333,6 +337,7 @@ CONFIG_TEMPLATE = dedent(
             const baseManifestUrl = new URL('/manifest.json', window.location.origin).toString();
             const openrouterKey = document.getElementById('config-openrouter-key');
             const openrouterModel = document.getElementById('config-openrouter-model');
+            const metadataAddonInput = document.getElementById('config-metadata-addon');
             const catalogSlider = document.getElementById('config-catalog-count');
             const catalogValue = document.getElementById('catalog-count-value');
             const catalogItemsSlider = document.getElementById('config-catalog-items');
@@ -368,6 +373,7 @@ CONFIG_TEMPLATE = dedent(
             let statusPollTimer = null;
 
             openrouterModel.value = defaults.openrouterModel || '';
+            metadataAddonInput.value = defaults.metadataAddon || '';
             catalogSlider.value = defaults.catalogCount || catalogSlider.min || 1;
             catalogValue.textContent = catalogSlider.value;
             const defaultCatalogItems = defaults.catalogItemCount || catalogItemsSlider.min || 4;
@@ -407,6 +413,10 @@ CONFIG_TEMPLATE = dedent(
                 updateManifestPreview();
             });
             openrouterModel.addEventListener('input', () => {
+                markProfileDirty();
+                updateManifestPreview();
+            });
+            metadataAddonInput.addEventListener('input', () => {
                 markProfileDirty();
                 updateManifestPreview();
             });
@@ -716,6 +726,9 @@ CONFIG_TEMPLATE = dedent(
                     ready: Boolean(raw.ready),
                     lastRefreshedAt: raw.lastRefreshedAt || '',
                     nextRefreshAt: raw.nextRefreshAt || '',
+                    metadataAddon: typeof raw.metadataAddon === 'string'
+                        ? raw.metadataAddon.trim()
+                        : '',
                 };
             }
 
@@ -723,6 +736,7 @@ CONFIG_TEMPLATE = dedent(
                 return {
                     openrouterKey: openrouterKey.value.trim(),
                     openrouterModel: openrouterModel.value.trim(),
+                    metadataAddon: metadataAddonInput.value.trim(),
                     catalogCount: catalogSlider.value,
                     catalogItems: catalogItemsSlider.value,
                     refreshInterval: refreshSelect.value,
@@ -745,6 +759,7 @@ CONFIG_TEMPLATE = dedent(
                 if (settings.refreshInterval) payload.refreshInterval = Number(settings.refreshInterval);
                 if (settings.cacheTtl) payload.cacheTtl = Number(settings.cacheTtl);
                 if (settings.traktAccessToken) payload.traktAccessToken = settings.traktAccessToken;
+                if (settings.metadataAddon) payload.metadataAddon = settings.metadataAddon;
                 return payload;
             }
 
@@ -864,6 +879,7 @@ CONFIG_TEMPLATE = dedent(
                 if (settings.traktAccessToken) {
                     params.set('traktAccessToken', settings.traktAccessToken);
                 }
+                if (settings.metadataAddon) params.set('metadataAddon', settings.metadataAddon);
                 url.search = params.toString();
                 return url.toString();
             }
@@ -1065,6 +1081,9 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
             settings.trakt_client_id and settings.trakt_client_secret
         ),
         "traktCallbackOrigin": resolved_callback_origin,
+        "metadataAddon": (
+            str(settings.metadata_addon_url) if settings.metadata_addon_url else ""
+        ),
     }
     defaults_json = json.dumps(defaults).replace("</", "<\\/")
 
