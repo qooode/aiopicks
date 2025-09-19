@@ -6,7 +6,7 @@ import logging
 import secrets
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlencode, urlparse
 
 import httpx
@@ -110,13 +110,17 @@ def get_catalog_service(app: FastAPI) -> CatalogService:
 
 def register_routes(fastapi_app: FastAPI) -> None:
     async def _manifest_endpoint(
-        request: Request, *, profile_id: str | None = None
+        request: Request,
+        *,
+        profile_id: str | None = None,
+        extra_params: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         service = get_catalog_service(fastapi_app)
         try:
-            config = ManifestConfig.from_request(
-                request.query_params, profile_id=profile_id
-            )
+            payload = dict(request.query_params)
+            if extra_params:
+                payload.update(extra_params)
+            config = ManifestConfig.from_request(payload, profile_id=profile_id)
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=exc.errors()) from exc
 
@@ -179,9 +183,36 @@ def register_routes(fastapi_app: FastAPI) -> None:
             render_config_page(settings, callback_origin=callback_origin)
         )
 
+    def _parse_path_overrides(raw_segments: str) -> dict[str, str]:
+        if not raw_segments:
+            return {}
+        segments = [segment for segment in raw_segments.split("/") if segment]
+        if not segments:
+            return {}
+        if len(segments) % 2 != 0:
+            raise ValueError("Path overrides must use key/value pairs")
+        overrides: dict[str, str] = {}
+        for index in range(0, len(segments), 2):
+            key = segments[index]
+            value = segments[index + 1]
+            if not key:
+                raise ValueError("Override keys may not be empty")
+            overrides[key] = value
+        return overrides
+
     @fastapi_app.get("/manifest.json")
     async def manifest(request: Request) -> dict[str, Any]:
         return await _manifest_endpoint(request)
+
+    @fastapi_app.get("/manifest/{path_params:path}/manifest.json")
+    async def manifest_with_path_overrides(
+        request: Request, path_params: str
+    ) -> dict[str, Any]:
+        try:
+            overrides = _parse_path_overrides(path_params)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return await _manifest_endpoint(request, extra_params=overrides)
 
     @fastapi_app.get("/profiles/{profile_id}/manifest.json")
     async def manifest_with_profile(

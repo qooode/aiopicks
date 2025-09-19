@@ -14,11 +14,12 @@ class DummyCatalogService(CatalogService):
 
     def __init__(self) -> None:  # pragma: no cover - nothing to initialise
         # Deliberately skip super().__init__ to avoid touching external systems.
-        pass
+        self.last_config: ManifestConfig | None = None
 
     async def list_manifest_catalogs(  # type: ignore[override]
         self, config: ManifestConfig
     ) -> tuple[SimpleNamespace, list[dict[str, object]]]:
+        self.last_config = config
         state = SimpleNamespace(openrouter_model="test-model")
         return state, []
 
@@ -39,3 +40,33 @@ def test_manifest_advertises_only_catalog_resource() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["resources"] == ["catalog"]
+
+
+def test_manifest_allows_path_overrides() -> None:
+    app = FastAPI()
+    register_routes(app)
+    service = DummyCatalogService()
+    app.state.catalog_service = service
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/manifest/catalogCount/5/catalogItems/9/manifest.json",
+            params={"catalogCount": "2"},
+        )
+
+    assert response.status_code == 200
+    assert service.last_config is not None
+    # Path-based overrides should take precedence over the query string.
+    assert service.last_config.catalog_count == 5
+    assert service.last_config.catalog_item_count == 9
+
+
+def test_manifest_rejects_malformed_path_overrides() -> None:
+    app = FastAPI()
+    register_routes(app)
+    app.state.catalog_service = DummyCatalogService()
+
+    with TestClient(app) as client:
+        response = client.get("/manifest/catalogCount/6/catalogItems/manifest.json")
+
+    assert response.status_code == 400
