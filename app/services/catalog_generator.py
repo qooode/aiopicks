@@ -26,7 +26,7 @@ from ..config import Settings
 from ..db_models import CatalogRecord, Profile
 from ..models import Catalog, CatalogBundle, CatalogItem
 from ..utils import slugify
-from .cinemeta import CinemetaClient, CinemetaMatch
+from .metadata_addon import MetadataAddonClient, MetadataMatch
 from .openrouter import OpenRouterClient
 from .trakt import HistoryBatch, TraktClient
 
@@ -256,16 +256,16 @@ class CatalogService:
         settings: Settings,
         trakt_client: TraktClient,
         openrouter_client: OpenRouterClient,
-        cinemeta_client: CinemetaClient,
+        metadata_client: MetadataAddonClient,
         session_factory: async_sessionmaker[AsyncSession],
     ):
         self._settings = settings
         self._trakt = trakt_client
         self._ai = openrouter_client
-        self._cinemeta = cinemeta_client
+        self._metadata_client = metadata_client
         self._session_factory = session_factory
         self._default_metadata_addon_url = getattr(
-            cinemeta_client, "default_base_url", None
+            metadata_client, "default_base_url", None
         )
         self._locks: dict[str, asyncio.Lock] = {}
         self._refresh_task: asyncio.Task[None] | None = None
@@ -496,7 +496,7 @@ class CatalogService:
                 exclusions=exclusion_payload,
             )
             catalogs = self._bundle_to_dict(bundle)
-            await self._enrich_catalogs_with_cinemeta(catalogs, metadata_url)
+            await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
             if not (catalogs["movie"] or catalogs["series"]):
                 logger.warning(
                     "AI returned an empty catalog bundle for profile %s; falling back to history",
@@ -518,7 +518,7 @@ class CatalogService:
                 seed=seed,
                 item_limit=state.catalog_item_count,
             )
-            await self._enrich_catalogs_with_cinemeta(catalogs, metadata_url)
+            await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
 
         await self._store_catalogs(state, catalogs)
 
@@ -838,19 +838,19 @@ class CatalogService:
             if updated:
                 await session.commit()
 
-    async def _enrich_catalogs_with_cinemeta(
+    async def _enrich_catalogs_with_metadata(
         self,
         catalogs: dict[str, dict[str, Catalog]],
         metadata_addon_url: str | None,
     ) -> None:
-        """Populate missing identifiers and artwork by querying Cinemeta."""
+        """Populate missing identifiers and artwork via a metadata add-on."""
 
         effective_url = metadata_addon_url or self._default_metadata_addon_url
         if not effective_url:
             return
 
         lookup_tasks: dict[
-            tuple[str, str, int | None], asyncio.Task[CinemetaMatch | None]
+            tuple[str, str, int | None], asyncio.Task[MetadataMatch | None]
         ] = {}
         for catalog_map in catalogs.values():
             for catalog in catalog_map.values():
@@ -869,8 +869,8 @@ class CatalogService:
                         title: str = title,
                         content_type: str = item.type,
                         year: int | None = item.year,
-                    ) -> CinemetaMatch | None:
-                        return await self._cinemeta.lookup(
+                    ) -> MetadataMatch | None:
+                        return await self._metadata_client.lookup(
                             title,
                             content_type=content_type,
                             year=year,
@@ -885,10 +885,12 @@ class CatalogService:
         results = await asyncio.gather(
             *lookup_tasks.values(), return_exceptions=True
         )
-        matches: dict[tuple[str, str, int | None], CinemetaMatch] = {}
+        matches: dict[tuple[str, str, int | None], MetadataMatch] = {}
         for key, result in zip(lookup_tasks.keys(), results):
             if isinstance(result, Exception):
-                logger.warning("Cinemeta lookup failed for %s: %s", key, result)
+                logger.warning(
+                    "Metadata add-on lookup failed for %s: %s", key, result
+                )
                 continue
             if result is None:
                 continue

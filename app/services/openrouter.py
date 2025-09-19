@@ -44,7 +44,7 @@ Instructions:
 9. Center each catalog on a vivid, specific micro-theme or narrative that ties back to their logged tastes while pushing them toward unexpected adjacent discoveries. Avoid broad buckets like "action adventures" or "fantasy journeys".
 10. Treat the viewer's history as inspiration, not a shopping list—avoid repeating titles mentioned above unless a sequel or continuation is essential, and spotlight why each new pick connects to their tastes.
 11. Lean into discovery: ensure at least 60% of every catalog consists of fresh-to-viewer surprises rather than comfort rewatches.
-12. For each item include only its real title, type, release year, and a concise description. Do not invent IDs, posters, or runtimes—the server enriches entries with Cinemeta.
+12. For each item include only its real title, type, release year, and a concise description. Do not invent IDs, posters, or runtimes—the server enriches entries with the configured metadata add-on (for example, Cinemeta).
 
 Respond with JSON using this structure:
 {{

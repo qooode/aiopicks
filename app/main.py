@@ -17,7 +17,7 @@ from pydantic import ValidationError
 
 from .config import settings
 from .database import Database
-from .services.cinemeta import CinemetaClient
+from .services.metadata_addon import MetadataAddonClient
 from .services.catalog_generator import CatalogService
 from .services.catalog_generator import ManifestConfig
 from .services.openrouter import OpenRouterClient
@@ -45,13 +45,13 @@ async def lifespan(_: FastAPI):
             timeout=httpx.Timeout(60.0, connect=10.0),
         )
     )
-    cinemeta_client_kwargs: dict[str, Any] = {
+    metadata_client_kwargs: dict[str, Any] = {
         "timeout": httpx.Timeout(15.0, connect=5.0)
     }
     if settings.metadata_addon_url:
-        cinemeta_client_kwargs["base_url"] = str(settings.metadata_addon_url)
-    cinemeta_http_client = await exit_stack.enter_async_context(
-        httpx.AsyncClient(**cinemeta_client_kwargs)
+        metadata_client_kwargs["base_url"] = str(settings.metadata_addon_url)
+    metadata_http_client = await exit_stack.enter_async_context(
+        httpx.AsyncClient(**metadata_client_kwargs)
     )
     database = Database(settings.database_url)
     await database.create_all()
@@ -63,9 +63,11 @@ async def lifespan(_: FastAPI):
         if settings.metadata_addon_url is not None
         else None
     )
-    cinemeta = CinemetaClient(cinemeta_http_client, default_metadata_addon)
+    metadata_client = MetadataAddonClient(
+        metadata_http_client, default_metadata_addon
+    )
     catalog_service = CatalogService(
-        settings, trakt, openrouter, cinemeta, database.session_factory
+        settings, trakt, openrouter, metadata_client, database.session_factory
     )
 
     app.state.catalog_service = catalog_service
