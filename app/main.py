@@ -124,10 +124,7 @@ def register_routes(fastapi_app: FastAPI) -> None:
             "id": "com.aiopicks.python",
             "version": "1.0.0",
             "name": manifest_name,
-            "description": (
-                "Dynamic, AI-randomized catalogs powered by OpenRouter's Google Gemini 2.5 "
-                "Flash Lite model and your Trakt history."
-            ),
+            "description": "Dynamic catalogs tailored to your Trakt history.",
             "catalogs": catalogs,
             "resources": ["catalog"],
             "types": ["movie", "series"],
