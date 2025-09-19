@@ -297,7 +297,7 @@ class CatalogService:
     ) -> tuple[ProfileState, list[dict[str, Any]]]:
         """Return manifest catalog entries for the resolved profile."""
 
-        state = await self.prepare_profile(config, wait_for_refresh=False)
+        state = await self.prepare_profile(config, wait_for_refresh=True)
         catalogs = await self._load_catalogs(state.id)
         grouped: dict[str, list[Catalog]] = {"movie": [], "series": []}
         for catalog in catalogs:
@@ -318,7 +318,7 @@ class CatalogService:
 
         state: ProfileState | None = None
         try:
-            state = await self.prepare_profile(config, wait_for_refresh=False)
+            state = await self.prepare_profile(config, wait_for_refresh=True)
         except ValueError:
             state = None
 

@@ -19,6 +19,106 @@ from app.services.trakt import TraktClient
 from app.services.catalog_generator import ManifestConfig
 
 
+class RefreshingCatalogService(CatalogService):
+    """Catalog service stub that records refresh behaviour."""
+
+    new_base_id = "aiopicks-movie-fresh"
+    new_title = "Fresh Picks"
+    new_item_title = "Brand New Movie"
+
+    def __init__(self, settings: Settings, session_factory):
+        super().__init__(
+            settings,
+            cast(TraktClient, object()),
+            cast(OpenRouterClient, object()),
+            cast(MetadataAddonClient, object()),
+            session_factory,
+        )
+        self.refresh_calls = 0
+
+    async def _refresh_catalogs(self, state: ProfileState) -> None:  # type: ignore[override]
+        self.refresh_calls += 1
+        catalog = Catalog(
+            id=self.new_base_id,
+            type="movie",
+            title=self.new_title,
+            description="Latest recommendations",
+            seed="fresh-seed",
+            items=[
+                CatalogItem(
+                    title=self.new_item_title,
+                    type="movie",
+                    overview="Freshly generated selection",
+                    imdb_id="tt7654321",
+                )
+            ],
+            generated_at=datetime.utcnow(),
+        )
+        await self._store_catalogs(
+            state,
+            {"movie": {catalog.id: catalog}, "series": {}},
+        )
+
+
+async def _seed_stale_profile(
+    service: CatalogService,
+    database: Database,
+    profile_id: str,
+) -> None:
+    """Populate the database with a stale catalog for refresh testing."""
+
+    stale_generated = datetime.utcnow() - timedelta(hours=2)
+    async with database.session_factory() as session:
+        profile = Profile(
+            id=profile_id,
+            openrouter_api_key="test-key",
+            openrouter_model="test-model",
+            catalog_count=1,
+            catalog_item_count=1,
+            refresh_interval_seconds=3600,
+            response_cache_seconds=60,
+            next_refresh_at=stale_generated,
+            last_refreshed_at=stale_generated,
+            created_at=stale_generated,
+            updated_at=stale_generated,
+        )
+        session.add(profile)
+
+        old_catalog = Catalog(
+            id=service._scoped_catalog_id(profile_id, "aiopicks-movie-old"),
+            type="movie",
+            title="Stale Picks",
+            description="Outdated selections",
+            seed="old-seed",
+            items=[
+                CatalogItem(
+                    title="Aged Recommendation",
+                    type="movie",
+                    overview="Previous catalog entry",
+                    imdb_id="tt1234567",
+                )
+            ],
+            generated_at=stale_generated,
+        )
+
+        record = CatalogRecord(
+            profile_id=profile_id,
+            content_type="movie",
+            catalog_id=old_catalog.id,
+            title=old_catalog.title,
+            description=old_catalog.description,
+            seed=old_catalog.seed,
+            position=0,
+            payload=old_catalog.model_dump(mode="json"),
+            generated_at=old_catalog.generated_at,
+            expires_at=stale_generated + timedelta(seconds=30),
+            created_at=stale_generated,
+            updated_at=stale_generated,
+        )
+        session.add(record)
+        await session.commit()
+
+
 def test_default_profile_skipped_without_api_key(tmp_path) -> None:
     """The default profile should not be created when no API key is configured."""
 
@@ -42,6 +142,66 @@ def test_default_profile_skipped_without_api_key(tmp_path) -> None:
         state = await service._load_profile_state("default")
 
         assert state is None
+
+        await database.dispose()
+
+    asyncio.run(runner())
+
+
+def test_manifest_waits_for_refresh(tmp_path) -> None:
+    """Manifest requests should wait for catalog regeneration when stale."""
+
+    async def runner() -> None:
+        database_path = tmp_path / "manifest-refresh.db"
+        database = Database(f"sqlite+aiosqlite:///{database_path}")
+        await database.create_all()
+
+        settings = Settings(_env_file=None)
+        service = RefreshingCatalogService(settings, database.session_factory)
+        profile_id = "refresh-user"
+        await _seed_stale_profile(service, database, profile_id)
+
+        config = ManifestConfig.model_validate({"profile": profile_id})
+        state, manifest_entries = await service.list_manifest_catalogs(config)
+
+        assert state.id == profile_id
+        assert service.refresh_calls == 1
+        scoped_id = service._scoped_catalog_id(profile_id, service.new_base_id)
+        assert [entry["id"] for entry in manifest_entries] == [scoped_id]
+        assert [entry["name"] for entry in manifest_entries] == [service.new_title]
+
+        catalogs = await service._load_catalogs(profile_id)
+        assert [catalog.title for catalog in catalogs] == [service.new_title]
+
+        await database.dispose()
+
+    asyncio.run(runner())
+
+
+def test_catalog_payload_available_after_refresh(tmp_path) -> None:
+    """Catalog payloads should be available immediately after a refresh."""
+
+    async def runner() -> None:
+        database_path = tmp_path / "catalog-refresh.db"
+        database = Database(f"sqlite+aiosqlite:///{database_path}")
+        await database.create_all()
+
+        settings = Settings(_env_file=None)
+        service = RefreshingCatalogService(settings, database.session_factory)
+        profile_id = "payload-user"
+        await _seed_stale_profile(service, database, profile_id)
+
+        config = ManifestConfig.model_validate({"profile": profile_id})
+        new_catalog_id = service._scoped_catalog_id(profile_id, service.new_base_id)
+        payload = await service.get_catalog_payload(config, "movie", new_catalog_id)
+
+        assert service.refresh_calls == 1
+        assert payload["catalogName"] == service.new_title
+        metas = payload["metas"]
+        assert metas and metas[0]["name"] == service.new_item_title
+
+        catalogs = await service._load_catalogs(profile_id)
+        assert [catalog.title for catalog in catalogs] == [service.new_title]
 
         await database.dispose()
 
