@@ -163,6 +163,39 @@ def test_profile_id_uses_trakt_slug() -> None:
     assert profile_id == "trakt-example-user"
 
 
+def test_profile_id_ignores_default_hint_when_trakt_present() -> None:
+    """Explicit default profile IDs are overridden when Trakt identity is known."""
+
+    class DummyTrakt:
+        async def fetch_user(self, *, client_id=None, access_token=None):  # noqa: D401
+            return {
+                "ids": {"slug": "Example_User"},
+                "username": "Example_User",
+                "name": "Example User",
+            }
+
+    settings = Settings(_env_file=None)
+    service = CatalogService(
+        settings,
+        cast(TraktClient, DummyTrakt()),
+        cast(OpenRouterClient, object()),
+        cast(CinemetaClient, object()),
+        cast(Database, object()),
+    )
+
+    config = ManifestConfig.model_validate(
+        {
+            "profileId": "default",
+            "traktAccessToken": "token-123",
+            "traktClientId": "client",
+        }
+    )
+
+    profile_id = asyncio.run(service.determine_profile_id(config))
+
+    assert profile_id == "trakt-example-user"
+
+
 def test_profile_id_hashes_trakt_token_when_slug_missing() -> None:
     """Fallback hashes the access token to keep IDs unique when slug lookup fails."""
 
@@ -186,6 +219,48 @@ def test_profile_id_hashes_trakt_token_when_slug_missing() -> None:
     profile_id = asyncio.run(service.determine_profile_id(config))
 
     assert profile_id == f"trakt-{expected}"
+
+
+def test_resolve_profile_persists_trakt_display_name(tmp_path) -> None:
+    """Resolved profiles store the human-friendly Trakt display name."""
+
+    class DummyTrakt:
+        async def fetch_user(self, *, client_id=None, access_token=None):  # noqa: D401
+            return {
+                "ids": {"slug": "Example_User"},
+                "username": "Example_User",
+                "name": "Example User",
+            }
+
+    async def runner() -> None:
+        database_path = tmp_path / "display.db"
+        database = Database(f"sqlite+aiosqlite:///{database_path}")
+        await database.create_all()
+
+        settings = Settings(_env_file=None, OPENROUTER_API_KEY="test-key")
+        service = CatalogService(
+            settings,
+            cast(TraktClient, DummyTrakt()),
+            cast(OpenRouterClient, object()),
+            cast(CinemetaClient, object()),
+            database.session_factory,
+        )
+
+        config = ManifestConfig.model_validate(
+            {"traktAccessToken": "token-abc", "traktClientId": "client"}
+        )
+
+        context = await service.resolve_profile(config)
+        assert context.state.id == "trakt-example-user"
+
+        async with database.session_factory() as session:
+            profile = await session.get(Profile, context.state.id)
+            assert profile is not None
+            assert profile.display_name == "Example User"
+
+        await database.dispose()
+
+    asyncio.run(runner())
 
 
 def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:
