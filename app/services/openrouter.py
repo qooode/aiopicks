@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from ..config import Settings
 from ..models import Catalog, CatalogBundle, CatalogItem
-from ..utils import extract_json_object
+from ..utils import extract_json_object, slugify
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,7 @@ class OpenRouterClient:
         seed: str,
         api_key: str | None = None,
         model: str | None = None,
+        exclusions: dict[str, dict[str, Any]] | None = None,
     ) -> CatalogBundle:
         """Generate new catalogs using the configured model."""
 
@@ -146,7 +147,10 @@ class OpenRouterClient:
             raise RuntimeError("Model response missing content")
 
         parsed = extract_json_object(content)
+        exclusion_map = self._normalise_exclusions(exclusions)
         bundle = CatalogBundle.from_ai_response(parsed, seed=seed)
+        if exclusion_map:
+            self._apply_exclusions(bundle, exclusion_map)
         if bundle.is_empty():
             raise RuntimeError("Model returned an empty catalog bundle")
         await self._ensure_item_targets(
@@ -156,6 +160,7 @@ class OpenRouterClient:
             item_limit=item_target,
             api_key=resolved_key,
             model=resolved_model,
+            exclusions=exclusion_map,
         )
         return bundle
 
@@ -195,12 +200,18 @@ class OpenRouterClient:
         item_limit: int,
         api_key: str,
         model: str,
+        exclusions: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """Ensure every catalog reaches the configured item target."""
 
         async def _fill(content_type: str, catalogs: list[Catalog]) -> None:
             attempts = 0
-            requests = self._prepare_top_up_requests(catalogs, item_limit)
+            content_exclusions = (exclusions or {}).get(content_type)
+            requests = self._prepare_top_up_requests(
+                catalogs,
+                item_limit,
+                exclusions=content_exclusions,
+            )
             while requests and attempts < 3:
                 additions = await self._top_up_catalogs(
                     summary,
@@ -210,11 +221,20 @@ class OpenRouterClient:
                     item_limit=item_limit,
                     api_key=api_key,
                     model=model,
+                    exclusions=content_exclusions,
                 )
                 if not additions:
                     break
-                self._merge_additions(catalogs, additions)
-                requests = self._prepare_top_up_requests(catalogs, item_limit)
+                self._merge_additions(
+                    catalogs,
+                    additions,
+                    exclusions=content_exclusions,
+                )
+                requests = self._prepare_top_up_requests(
+                    catalogs,
+                    item_limit,
+                    exclusions=content_exclusions,
+                )
                 attempts += 1
             if requests:
                 logger.warning(
@@ -228,14 +248,20 @@ class OpenRouterClient:
         await _fill("series", bundle.series_catalogs)
 
     def _prepare_top_up_requests(
-        self, catalogs: list[Catalog], item_limit: int
+        self,
+        catalogs: list[Catalog],
+        item_limit: int,
+        *,
+        exclusions: dict[str, Any] | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Normalise catalog items and describe missing counts for top-ups."""
 
         requests: dict[str, dict[str, Any]] = {}
         for catalog in catalogs:
             cleaned, summaries, missing = self._normalise_catalog(
-                catalog, item_limit=item_limit
+                catalog,
+                item_limit=item_limit,
+                exclusions=exclusions,
             )
             if catalog.items != cleaned:
                 catalog.items = cleaned
@@ -248,11 +274,18 @@ class OpenRouterClient:
         return requests
 
     def _merge_additions(
-        self, catalogs: list[Catalog], additions: dict[str, list[CatalogItem]]
+        self,
+        catalogs: list[Catalog],
+        additions: dict[str, list[CatalogItem]],
+        *,
+        exclusions: dict[str, Any] | None = None,
     ) -> None:
         """Append new items to catalogs, avoiding duplicates."""
 
         catalog_map = {catalog.id: catalog for catalog in catalogs}
+        excluded: set[str] = set()
+        if exclusions:
+            excluded = set(exclusions.get("fingerprints", set()))
         for catalog_id, items in additions.items():
             catalog = catalog_map.get(catalog_id)
             if catalog is None or not items:
@@ -261,6 +294,8 @@ class OpenRouterClient:
             for item in items:
                 key = self._catalog_item_key(item)
                 if key in existing:
+                    continue
+                if excluded and self._is_excluded(item, excluded):
                     continue
                 existing.add(key)
                 catalog.items.append(item)
@@ -275,6 +310,7 @@ class OpenRouterClient:
         item_limit: int,
         api_key: str,
         model: str,
+        exclusions: dict[str, Any] | None = None,
     ) -> dict[str, list[CatalogItem]]:
         """Ask the model for additional catalog items."""
 
@@ -317,6 +353,22 @@ class OpenRouterClient:
             "Respond with JSON where each key is a catalog ID and the value is an "
             "array of the missing items."
         )
+        avoided_titles: list[str] = []
+        excluded: set[str] = set()
+        if exclusions:
+            titles = [
+                str(title)
+                for title in exclusions.get("titles", [])
+                if isinstance(title, str) and title
+            ]
+            avoided_titles = titles[:12]
+            excluded = set(exclusions.get("fingerprints", set()))
+        if avoided_titles:
+            prompt_lines.append(
+                "Avoid anything they've already finished, including: "
+                + "; ".join(avoided_titles)
+                + "."
+            )
         prompt_lines.append("Use this schema:")
         prompt_lines.append(
             "{{\n  \"{id}\": [\n    {{\n      \"name\": \"Title\",\n      \"type\": \"{ctype}\",\n      \"year\": 2024,\n      \"description\": \"short sentence\"\n    }}\n  ]\n}}".format(
@@ -402,6 +454,8 @@ class OpenRouterClient:
                     item = CatalogItem.model_validate(item_data)
                 except ValidationError:
                     continue
+                if excluded and self._is_excluded(item, excluded):
+                    continue
                 collected.append(item)
                 if len(collected) >= needed:
                     break
@@ -410,19 +464,28 @@ class OpenRouterClient:
         return additions
 
     def _normalise_catalog(
-        self, catalog: Catalog, *, item_limit: int
+        self,
+        catalog: Catalog,
+        *,
+        item_limit: int,
+        exclusions: dict[str, Any] | None = None,
     ) -> tuple[list[CatalogItem], list[str], int]:
         """Remove duplicates and enforce item limits for a catalog."""
 
         cleaned: list[CatalogItem] = []
         summaries: list[str] = []
         seen: set[tuple[str, str, int | None]] = set()
+        excluded: set[str] = set()
+        if exclusions:
+            excluded = set(exclusions.get("fingerprints", set()))
         for item in catalog.items:
             title = (item.title or "").strip()
             if not title:
                 continue
             key = self._catalog_item_key(item)
             if key in seen:
+                continue
+            if excluded and self._is_excluded(item, excluded):
                 continue
             seen.add(key)
             cleaned.append(item)
@@ -443,3 +506,83 @@ class OpenRouterClient:
     ) -> tuple[str, str, int | None]:
         title = (item.title or "").strip().casefold()
         return (item.type, title, item.year)
+
+    def _apply_exclusions(
+        self,
+        bundle: CatalogBundle,
+        exclusions: dict[str, dict[str, Any]],
+    ) -> None:
+        for catalog in bundle.movie_catalogs:
+            self._filter_catalog_items(catalog, exclusions.get("movie"))
+        for catalog in bundle.series_catalogs:
+            self._filter_catalog_items(catalog, exclusions.get("series"))
+
+    def _filter_catalog_items(
+        self,
+        catalog: Catalog,
+        exclusions: dict[str, Any] | None,
+    ) -> None:
+        if not exclusions:
+            return
+        excluded: set[str] = set(exclusions.get("fingerprints", set()))
+        if not excluded:
+            return
+        filtered = [
+            item
+            for item in catalog.items
+            if not self._is_excluded(item, excluded)
+        ]
+        if len(filtered) != len(catalog.items):
+            catalog.items = filtered
+
+    def _normalise_exclusions(
+        self, exclusions: dict[str, dict[str, Any]] | None
+    ) -> dict[str, dict[str, Any]]:
+        if not exclusions:
+            return {}
+        normalised: dict[str, dict[str, Any]] = {}
+        for content_type, payload in exclusions.items():
+            if content_type not in {"movie", "series"}:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            fingerprints: set[str] = set()
+            titles: list[str] = []
+            for fp in payload.get("fingerprints", []) or []:
+                if isinstance(fp, str) and fp:
+                    fingerprints.add(fp)
+            for title in payload.get("recent_titles", []) or []:
+                if isinstance(title, str) and title:
+                    titles.append(title)
+            if fingerprints or titles:
+                normalised[content_type] = {
+                    "fingerprints": fingerprints,
+                    "titles": titles[:24],
+                }
+        return normalised
+
+    def _is_excluded(self, item: CatalogItem, excluded: set[str]) -> bool:
+        if not excluded:
+            return False
+        return any(fp in excluded for fp in self._item_fingerprints(item))
+
+    def _item_fingerprints(self, item: CatalogItem) -> set[str]:
+        fingerprints: set[str] = set()
+        prefix = item.type
+        if item.imdb_id:
+            fingerprints.add(f"{prefix}:imdb:{item.imdb_id.lower()}")
+        if item.trakt_id is not None:
+            fingerprints.add(f"{prefix}:trakt:{item.trakt_id}")
+        if item.tmdb_id is not None:
+            fingerprints.add(f"{prefix}:tmdb:{item.tmdb_id}")
+        title = (item.title or "").strip().casefold()
+        if title:
+            fingerprints.add(f"{prefix}:title:{title}")
+            if item.year:
+                fingerprints.add(f"{prefix}:title:{title}:{item.year}")
+            slug_title = slugify(title)
+            if slug_title:
+                fingerprints.add(f"{prefix}:slug:{slug_title}")
+                if item.year:
+                    fingerprints.add(f"{prefix}:slug:{slug_title}:{item.year}")
+        return fingerprints

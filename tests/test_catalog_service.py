@@ -231,3 +231,75 @@ def test_metadata_addon_url_persisted(tmp_path) -> None:
 
     asyncio.run(runner())
 
+
+def test_watched_index_collects_identifiers() -> None:
+    """Completed titles produce stable fingerprints for exclusion logic."""
+
+    service = CatalogService.__new__(CatalogService)
+    movie_history = [
+        {
+            "movie": {
+                "title": "Seen Film",
+                "year": 2020,
+                "ids": {
+                    "imdb": "tt1234567",
+                    "trakt": 101,
+                    "tmdb": 202,
+                    "slug": "seen-film",
+                },
+            }
+        }
+    ]
+    show_history = [
+        {
+            "show": {
+                "title": "Seen Show",
+                "year": 2018,
+                "ids": {
+                    "imdb": "tt7654321",
+                    "trakt": 303,
+                },
+            }
+        }
+    ]
+
+    index = service._build_watched_index(movie_history, show_history)
+    movie_index = index["movie"]
+    series_index = index["series"]
+
+    assert "movie:imdb:tt1234567" in movie_index.fingerprints
+    assert "movie:trakt:101" in movie_index.fingerprints
+    assert movie_index.recent_titles == ["Seen Film (2020)"]
+    assert "series:imdb:tt7654321" in series_index.fingerprints
+    assert "series:trakt:303" in series_index.fingerprints
+
+
+def test_serialise_watched_index_filters_empty_entries() -> None:
+    """Serialisation drops empty content types and trims title samples."""
+
+    service = CatalogService.__new__(CatalogService)
+    index = {
+        "movie": service._index_history_items(
+            [
+                {
+                    "movie": {
+                        "title": "Another Film",
+                        "year": 2021,
+                        "ids": {"imdb": "tt9999999"},
+                    }
+                }
+            ],
+            key="movie",
+        ),
+        "series": service._index_history_items([], key="show"),
+    }
+
+    payload = service._serialise_watched_index(index)
+    assert set(payload.keys()) == {"movie"}
+    assert set(payload["movie"]["fingerprints"]) == {
+        "movie:imdb:tt9999999",
+        "movie:title:another film",
+        "movie:title:another film:2021",
+    }
+    assert payload["movie"]["recent_titles"] == ["Another Film (2021)"]
+
