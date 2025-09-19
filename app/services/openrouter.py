@@ -37,9 +37,10 @@ Instructions:
 3. Each catalog must include EXACTLY {items_per_catalog} strong picks with real titles and release years.
 4. Keep each description to a single crisp sentence (max ~16 words) to conserve tokens, even when {items_per_catalog} is large.
 5. Craft each catalog title as a premium streaming row tailored to this profile—reference the viewer's top genres, languages, or recent watches so it feels handpicked.
-6. Write titles in natural sentence case (capitalize the first word and proper nouns only) and avoid bland or generic phrasing.
-7. Balance comfort picks (known favorites) with 30% exploratory discoveries, highlighting why each row will delight this viewer.
-8. For each item include only its real title, type, release year, and a concise description. Do not invent IDs, posters, or runtimes—the server enriches entries with Cinemeta.
+6. Vary the title voice so every row feels surprising and bespoke; avoid recycled phrasing, marketing clichés, and never begin a title with "Your" or another possessive pronoun.
+7. Write titles in natural sentence case (capitalize the first word and proper nouns only), keeping the rest lower-case unless grammar requires otherwise.
+8. Balance comfort picks (known favorites) with 30% exploratory discoveries, highlighting why each row will delight this viewer.
+9. For each item include only its real title, type, release year, and a concise description. Do not invent IDs, posters, or runtimes—the server enriches entries with Cinemeta.
 
 Respond with JSON using this structure:
 {{
