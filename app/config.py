@@ -39,18 +39,6 @@ class Settings(BaseSettings):
     catalog_item_count: int = Field(
         default=8, alias="CATALOG_ITEM_COUNT", ge=1, le=100
     )
-    enable_movie_catalogs: bool = Field(
-        default=True, alias="ENABLE_MOVIE_CATALOGS"
-    )
-    enable_series_catalogs: bool = Field(
-        default=True, alias="ENABLE_SERIES_CATALOGS"
-    )
-    catalog_rotation_mode: Literal["refresh", "expand"] = Field(
-        default="refresh", alias="CATALOG_ROTATION_MODE"
-    )
-    suggestion_cooldown_days: int = Field(
-        default=45, alias="SUGGESTION_COOLDOWN_DAYS", ge=0, le=365
-    )
     refresh_interval_seconds: int = Field(
         default=43_200, alias="REFRESH_INTERVAL", ge=3_600
     )

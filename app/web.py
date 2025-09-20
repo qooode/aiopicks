@@ -7,7 +7,6 @@ from textwrap import dedent
 from urllib.parse import urlparse
 
 from .config import Settings
-from .discovery import blueprint_options_payload, default_blueprint_ids
 
 
 CONFIG_TEMPLATE = dedent(
@@ -104,88 +103,6 @@ CONFIG_TEMPLATE = dedent(
             font-weight: 400;
             font-size: 0.85rem;
             color: var(--text-muted);
-        }
-        .option-row {
-            display: flex;
-            gap: 0.75rem;
-            flex-wrap: wrap;
-        }
-        .option-row label {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-weight: 500;
-        }
-        .option-row input[type="checkbox"] {
-            width: 1.1rem;
-            height: 1.1rem;
-        }
-        .blueprint-list {
-            display: flex;
-            flex-direction: column;
-            gap: 0.65rem;
-        }
-        .blueprint-item {
-            border: 1px solid var(--outline);
-            border-radius: 14px;
-            padding: 0.75rem 0.9rem;
-            background: var(--surface-muted);
-            transition: border 0.2s ease, background 0.2s ease;
-        }
-        .blueprint-item.selected {
-            border-color: var(--outline-strong);
-            background: rgba(255, 255, 255, 0.04);
-        }
-        .blueprint-header {
-            display: flex;
-            justify-content: space-between;
-            gap: 0.75rem;
-            align-items: center;
-        }
-        .blueprint-header label {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            gap: 0.65rem;
-            font-weight: 600;
-        }
-        .blueprint-header input[type="checkbox"] {
-            width: 1.1rem;
-            height: 1.1rem;
-        }
-        .blueprint-actions {
-            display: inline-flex;
-            gap: 0.35rem;
-            align-items: center;
-        }
-        .blueprint-order {
-            min-width: 1.5rem;
-            text-align: center;
-            font-size: 0.85rem;
-            color: var(--text-muted);
-        }
-        .blueprint-actions button {
-            background: transparent;
-            border: 1px solid var(--outline);
-            color: var(--text-muted);
-            border-radius: 8px;
-            padding: 0.2rem 0.4rem;
-            font-size: 0.75rem;
-            line-height: 1;
-            min-width: 1.75rem;
-        }
-        .blueprint-actions button:hover:not(:disabled) {
-            border-color: var(--accent);
-            color: var(--accent);
-        }
-        .blueprint-actions button:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-        }
-        .blueprint-description {
-            margin: 0.45rem 0 0;
-            color: var(--text-muted);
-            font-size: 0.85rem;
         }
         input[type="text"],
         select {
@@ -427,13 +344,6 @@ CONFIG_TEMPLATE = dedent(
                     <input id="config-catalog-count" type="range" min="1" max="12" step="1" />
                 </div>
                 <div class="field">
-                    <label>Catalog types</label>
-                    <div class="option-row">
-                        <label><input id="config-enable-movies" type="checkbox" checked /> Movie rows</label>
-                        <label><input id="config-enable-series" type="checkbox" checked /> Series rows</label>
-                    </div>
-                </div>
-                <div class="field">
                     <label for="config-catalog-items">Items per catalog <span class="range-value" id="catalog-items-value"></span></label>
                     <input id="config-catalog-items" type="range" min="4" max="100" step="1" />
                 </div>
@@ -458,25 +368,6 @@ CONFIG_TEMPLATE = dedent(
                         <option value="1800">30 minutes</option>
                         <option value="3600">60 minutes</option>
                     </select>
-                </div>
-                <div class="field">
-                    <label for="config-rotation-mode">Row rotation <span class="helper">Keep catalog IDs stable to avoid reinstalling</span></label>
-                    <select id="config-rotation-mode">
-                        <option value="refresh">Keep row IDs, swap picks</option>
-                        <option value="expand">Mint new rows on each refresh</option>
-                    </select>
-                </div>
-                <div class="field">
-                    <label for="config-suggestion-cooldown">Discovery cooldown <span class="helper">Minimum days before resurfacing a title</span> <span class="range-value" id="suggestion-cooldown-value"></span></label>
-                    <input id="config-suggestion-cooldown" type="range" min="0" max="180" step="5" />
-                </div>
-                <div class="field">
-                    <label>Movie discovery lanes <span class="helper">Select and reorder the AI-generated rows</span></label>
-                    <div class="blueprint-list" id="movie-blueprint-list"></div>
-                </div>
-                <div class="field">
-                    <label>Series discovery lanes <span class="helper">Select and reorder the AI-generated rows</span></label>
-                    <div class="blueprint-list" id="series-blueprint-list"></div>
                 </div>
                 <div class="actions">
                     <button id="prepare-profile" type="button">
@@ -504,15 +395,10 @@ CONFIG_TEMPLATE = dedent(
             const catalogValue = document.getElementById('catalog-count-value');
             const catalogItemsSlider = document.getElementById('config-catalog-items');
             const catalogItemsValue = document.getElementById('catalog-items-value');
-            const moviesToggle = document.getElementById('config-enable-movies');
-            const seriesToggle = document.getElementById('config-enable-series');
             const historySlider = document.getElementById('config-history-limit');
             const historyValue = document.getElementById('history-limit-value');
             const refreshSelect = document.getElementById('config-refresh-interval');
             const cacheSelect = document.getElementById('config-cache-ttl');
-            const rotationSelect = document.getElementById('config-rotation-mode');
-            const suggestionSlider = document.getElementById('config-suggestion-cooldown');
-            const suggestionValue = document.getElementById('suggestion-cooldown-value');
             const prepareProfileButton = document.getElementById('prepare-profile');
             const prepareSpinner = document.getElementById('prepare-spinner');
             const prepareLabel = prepareProfileButton.querySelector('.label');
@@ -522,13 +408,6 @@ CONFIG_TEMPLATE = dedent(
             const copyMessage = document.getElementById('copy-message');
             const manifestStatus = document.getElementById('manifest-status');
             const manifestLock = document.getElementById('manifest-lock');
-            const movieBlueprintList = document.getElementById('movie-blueprint-list');
-            const seriesBlueprintList = document.getElementById('series-blueprint-list');
-            const blueprintOptions = defaults.blueprintOptions || { movie: [], series: [] };
-            const blueprintState = {
-                movie: { selected: sanitizeBlueprintSelection('movie', defaults.movieBlueprints || []) },
-                series: { selected: sanitizeBlueprintSelection('series', defaults.seriesBlueprints || []) },
-            };
 
             const traktLoginButton = document.getElementById('trakt-login');
             const traktDisconnectButton = document.getElementById('trakt-disconnect');
@@ -539,12 +418,6 @@ CONFIG_TEMPLATE = dedent(
             const traktStatsShows = document.getElementById('trakt-stats-shows');
             const traktStatsSummary = document.getElementById('trakt-stats-summary');
             const traktStatsUpdated = document.getElementById('trakt-stats-updated');
-            let moviesToggleTouched = false;
-            let seriesToggleTouched = false;
-            let rotationTouched = false;
-            let suggestionTouched = false;
-            let movieBlueprintsTouched = false;
-            let seriesBlueprintsTouched = false;
             const traktLoginAvailable = Boolean(defaults.traktLoginAvailable);
             const traktCallbackOrigin = (defaults.traktCallbackOrigin || '').trim();
             const traktOrigins = [window.location.origin];
@@ -559,8 +432,6 @@ CONFIG_TEMPLATE = dedent(
             let preparePending = false;
             let profileStatus = null;
             let statusPollTimer = null;
-
-            renderBlueprintLists();
 
             const profileStorageKey = 'aiopicks.profileId';
             let persistedProfileId = readStoredProfileId();
@@ -646,20 +517,6 @@ CONFIG_TEMPLATE = dedent(
             const defaultCatalogItems = defaults.catalogItemCount || catalogItemsSlider.min || 4;
             catalogItemsSlider.value = defaultCatalogItems;
             catalogItemsValue.textContent = catalogItemsSlider.value;
-            if (typeof defaults.moviesEnabled === 'boolean') {
-                moviesToggle.checked = defaults.moviesEnabled;
-            }
-            if (typeof defaults.seriesEnabled === 'boolean') {
-                seriesToggle.checked = defaults.seriesEnabled;
-            }
-            const rotationDefault = (defaults.rotationMode || 'refresh').toLowerCase();
-            rotationSelect.value = rotationDefault === 'expand' ? 'expand' : 'refresh';
-            const defaultCooldownRaw = Number(defaults.suggestionCooldownDays);
-            const cooldownValue = Number.isFinite(defaultCooldownRaw)
-                ? defaultCooldownRaw
-                : Number(suggestionSlider.value || suggestionSlider.min || 0);
-            suggestionSlider.value = String(cooldownValue);
-            suggestionValue.textContent = formatCooldownDays(cooldownValue);
             const resolvedHistoryLimit =
                 defaults.traktHistoryLimit || historySlider.value || historySlider.max || 1000;
             historySlider.value = resolvedHistoryLimit;
@@ -698,39 +555,12 @@ CONFIG_TEMPLATE = dedent(
                 markProfileDirty();
                 updateManifestPreview();
             });
-            moviesToggle.addEventListener('change', () => {
-                moviesToggleTouched = true;
-                markProfileDirty();
-                updateManifestPreview();
-                renderBlueprintLists();
-                updateManifestUi();
-                updateManifestStatus();
-            });
-            seriesToggle.addEventListener('change', () => {
-                seriesToggleTouched = true;
-                markProfileDirty();
-                updateManifestPreview();
-                renderBlueprintLists();
-                updateManifestUi();
-                updateManifestStatus();
-            });
             historySlider.addEventListener('input', () => {
                 historyLimitTouched = true;
                 historyValue.textContent = formatHistoryLimit(historySlider.value);
                 markProfileDirty();
                 updateManifestPreview();
                 updateTraktStats();
-            });
-            rotationSelect.addEventListener('change', () => {
-                rotationTouched = true;
-                markProfileDirty();
-                updateManifestPreview();
-            });
-            suggestionSlider.addEventListener('input', () => {
-                suggestionTouched = true;
-                suggestionValue.textContent = formatCooldownDays(suggestionSlider.value);
-                markProfileDirty();
-                updateManifestPreview();
             });
             openrouterModel.addEventListener('input', () => {
                 markProfileDirty();
@@ -960,10 +790,6 @@ CONFIG_TEMPLATE = dedent(
                     setManifestStatus('Generating catalogs… this typically takes under a minute.');
                     return;
                 }
-                if (!moviesToggle.checked && !seriesToggle.checked) {
-                    setManifestStatus('Enable movie or series rows to generate catalogs.', 'error');
-                    return;
-                }
                 if (!profileStatus) {
                     setManifestStatus('Adjust the settings and click “Generate catalogs” to warm your manifest URL.');
                     return;
@@ -1011,8 +837,7 @@ CONFIG_TEMPLATE = dedent(
             function updateManifestUi() {
                 const traktLocked = traktLoginAvailable && !traktAuth.accessToken;
                 const generating = preparePending || Boolean(profileStatus && profileStatus.refreshing);
-                const contentLocked = !moviesToggle.checked && !seriesToggle.checked;
-                prepareProfileButton.disabled = traktLocked || generating || contentLocked;
+                prepareProfileButton.disabled = traktLocked || generating;
                 prepareProfileButton.classList.toggle('loading', generating);
                 prepareProfileButton.setAttribute('aria-busy', generating ? 'true' : 'false');
                 if (prepareSpinner) {
@@ -1111,17 +936,6 @@ CONFIG_TEMPLATE = dedent(
                         history.stats = normalisedStats;
                     }
                 }
-                const blueprintRaw = raw.discoveryBlueprints && typeof raw.discoveryBlueprints === 'object'
-                    ? raw.discoveryBlueprints
-                    : {};
-                const buildBlueprintSection = (type) => {
-                    const section = blueprintRaw[type] && typeof blueprintRaw[type] === 'object'
-                        ? blueprintRaw[type]
-                        : {};
-                    const selected = Array.isArray(section.selected) ? section.selected : [];
-                    const available = Array.isArray(section.available) ? section.available : [];
-                    return { selected, available };
-                };
                 return {
                     profileId,
                     hasCatalogs: Boolean(raw.hasCatalogs),
@@ -1135,16 +949,6 @@ CONFIG_TEMPLATE = dedent(
                         : '',
                     traktHistoryLimit: Number.isFinite(historyLimit) && historyLimit > 0 ? historyLimit : 0,
                     traktHistory: history,
-                    moviesEnabled: raw.moviesEnabled !== false,
-                    seriesEnabled: raw.seriesEnabled !== false,
-                    rotationMode: typeof raw.rotationMode === 'string' ? raw.rotationMode : 'refresh',
-                    suggestionCooldownDays: Number.isFinite(Number(raw.suggestionCooldownDays))
-                        ? Number(raw.suggestionCooldownDays)
-                        : Number(suggestionSlider.value || defaults.suggestionCooldownDays || 0),
-                    discoveryBlueprints: {
-                        movie: buildBlueprintSection('movie'),
-                        series: buildBlueprintSection('series'),
-                    },
                 };
             }
 
@@ -1155,20 +959,10 @@ CONFIG_TEMPLATE = dedent(
                     metadataAddon: metadataAddonInput.value.trim(),
                     catalogCount: catalogSlider.value,
                     catalogItems: catalogItemsSlider.value,
-                    moviesEnabled: moviesToggle.checked ? '1' : '0',
-                    seriesEnabled: seriesToggle.checked ? '1' : '0',
                     traktHistoryLimit: historySlider.value,
                     refreshInterval: refreshSelect.value,
                     cacheTtl: cacheSelect.value,
-                    rotationMode: rotationSelect.value,
-                    suggestionCooldown: suggestionSlider.value,
                     traktAccessToken: traktAuth.accessToken,
-                    movieBlueprints: moviesToggle.checked
-                        ? [...blueprintState.movie.selected]
-                        : [],
-                    seriesBlueprints: seriesToggle.checked
-                        ? [...blueprintState.series.selected]
-                        : [],
                 };
             }
 
@@ -1186,25 +980,13 @@ CONFIG_TEMPLATE = dedent(
                 if (settings.openrouterModel) payload.openrouterModel = settings.openrouterModel;
                 if (settings.catalogCount) payload.catalogCount = Number(settings.catalogCount);
                 if (settings.catalogItems) payload.catalogItems = Number(settings.catalogItems);
-                if (settings.moviesEnabled !== undefined) payload.moviesEnabled = settings.moviesEnabled;
-                if (settings.seriesEnabled !== undefined) payload.seriesEnabled = settings.seriesEnabled;
                 if (settings.traktHistoryLimit) {
                     payload.traktHistoryLimit = Number(settings.traktHistoryLimit);
                 }
                 if (settings.refreshInterval) payload.refreshInterval = Number(settings.refreshInterval);
                 if (settings.cacheTtl) payload.cacheTtl = Number(settings.cacheTtl);
-                if (settings.rotationMode) payload.rotationMode = settings.rotationMode;
-                if (settings.suggestionCooldown !== undefined) {
-                    payload.suggestionCooldown = Number(settings.suggestionCooldown);
-                }
                 if (settings.traktAccessToken) payload.traktAccessToken = settings.traktAccessToken;
                 if (settings.metadataAddon) payload.metadataAddon = settings.metadataAddon;
-                if (settings.movieBlueprints !== undefined) {
-                    payload.movieBlueprints = settings.movieBlueprints;
-                }
-                if (settings.seriesBlueprints !== undefined) {
-                    payload.seriesBlueprints = settings.seriesBlueprints;
-                }
                 return payload;
             }
 
@@ -1221,11 +1003,7 @@ CONFIG_TEMPLATE = dedent(
                 if (includeConfig) {
                     const settings = collectManifestSettings();
                     Object.entries(settings).forEach(([key, value]) => {
-                        if (Array.isArray(value)) {
-                            params.set(key, value.length ? value.join(',') : '-');
-                            return;
-                        }
-                        if (value !== undefined && value !== null && value !== '') {
+                        if (value) {
                             params.set(key, value);
                         }
                     });
@@ -1263,7 +1041,6 @@ CONFIG_TEMPLATE = dedent(
                     }
                     profileStatus = normalized;
                     syncHistoryLimitFromStatus();
-                    syncPreferencesFromStatus();
                     updateManifestPreview();
                     updateManifestUi();
                     updateManifestStatus();
@@ -1305,7 +1082,6 @@ CONFIG_TEMPLATE = dedent(
                     }
                     profileStatus = normalized;
                     syncHistoryLimitFromStatus();
-                    syncPreferencesFromStatus();
                     updateManifestPreview();
                     updateManifestUi();
                     updateManifestStatus();
@@ -1336,27 +1112,15 @@ CONFIG_TEMPLATE = dedent(
                     'metadataAddon',
                     'catalogCount',
                     'catalogItems',
-                    'moviesEnabled',
-                    'seriesEnabled',
                     'traktHistoryLimit',
                     'refreshInterval',
                     'cacheTtl',
-                    'rotationMode',
-                    'suggestionCooldown',
                     'traktAccessToken',
-                    'movieBlueprints',
-                    'seriesBlueprints',
                 ];
                 const segments = [];
                 manifestKeys.forEach((key) => {
                     const value = settings[key];
-                    if (Array.isArray(value)) {
-                        const encodedValue = value.length ? value.join(',') : '-';
-                        segments.push(encodeURIComponent(key));
-                        segments.push(encodeURIComponent(encodedValue));
-                        return;
-                    }
-                    if (value === undefined || value === null || value === '') {
+                    if (!value) {
                         return;
                     }
                     segments.push(encodeURIComponent(key));
@@ -1372,199 +1136,6 @@ CONFIG_TEMPLATE = dedent(
 
             function updateManifestPreview() {
                 manifestPreview.textContent = buildConfiguredUrl();
-            }
-
-            function renderBlueprintLists() {
-                renderBlueprintList('movie', movieBlueprintList, moviesToggle.checked);
-                renderBlueprintList('series', seriesBlueprintList, seriesToggle.checked);
-            }
-
-            function renderBlueprintList(type, container, enabled) {
-                if (!container) {
-                    return;
-                }
-                const options = blueprintOptions[type] || [];
-                const selected = blueprintState[type] ? blueprintState[type].selected : [];
-                container.innerHTML = '';
-                if (!options.length) {
-                    const empty = document.createElement('p');
-                    empty.className = 'muted';
-                    empty.textContent = 'No discovery lanes available yet.';
-                    container.appendChild(empty);
-                    return;
-                }
-                options.forEach((option) => {
-                    const item = document.createElement('div');
-                    item.className = 'blueprint-item';
-                    item.dataset.id = option.id;
-                    const index = selected.indexOf(option.id);
-                    const isSelected = index !== -1;
-                    if (isSelected) {
-                        item.classList.add('selected');
-                    }
-
-                    const header = document.createElement('div');
-                    header.className = 'blueprint-header';
-
-                    const label = document.createElement('label');
-                    const checkbox = document.createElement('input');
-                    checkbox.type = 'checkbox';
-                    checkbox.checked = isSelected;
-                    checkbox.disabled = !enabled;
-                    checkbox.addEventListener('change', () => {
-                        toggleBlueprint(type, option.id, checkbox.checked);
-                    });
-                    label.appendChild(checkbox);
-                    const title = document.createElement('span');
-                    title.textContent = option.label || option.id;
-                    label.appendChild(title);
-                    header.appendChild(label);
-
-                    const actions = document.createElement('div');
-                    actions.className = 'blueprint-actions';
-                    const orderBadge = document.createElement('span');
-                    orderBadge.className = 'blueprint-order';
-                    orderBadge.textContent = isSelected ? String(index + 1) : '–';
-                    actions.appendChild(orderBadge);
-
-                    const upButton = document.createElement('button');
-                    upButton.type = 'button';
-                    upButton.textContent = '↑';
-                    upButton.title = 'Move up';
-                    upButton.disabled = !enabled || !isSelected || index === 0;
-                    upButton.addEventListener('click', () => {
-                        reorderBlueprint(type, option.id, -1);
-                    });
-                    actions.appendChild(upButton);
-
-                    const downButton = document.createElement('button');
-                    downButton.type = 'button';
-                    downButton.textContent = '↓';
-                    downButton.title = 'Move down';
-                    downButton.disabled = !enabled || !isSelected || index === selected.length - 1;
-                    downButton.addEventListener('click', () => {
-                        reorderBlueprint(type, option.id, 1);
-                    });
-                    actions.appendChild(downButton);
-
-                    header.appendChild(actions);
-                    item.appendChild(header);
-
-                    if (option.description) {
-                        const description = document.createElement('p');
-                        description.className = 'blueprint-description';
-                        description.textContent = option.description;
-                        item.appendChild(description);
-                    }
-
-                    container.appendChild(item);
-                });
-            }
-
-            function toggleBlueprint(type, blueprintId, enabled) {
-                const state = blueprintState[type];
-                if (!state) {
-                    return;
-                }
-                const next = [...state.selected];
-                const index = next.indexOf(blueprintId);
-                if (enabled && index === -1) {
-                    next.push(blueprintId);
-                } else if (!enabled && index !== -1) {
-                    next.splice(index, 1);
-                }
-                state.selected = sanitizeBlueprintSelection(type, next);
-                if (type === 'movie') {
-                    movieBlueprintsTouched = true;
-                } else {
-                    seriesBlueprintsTouched = true;
-                }
-                renderBlueprintLists();
-                updateManifestPreview();
-                updateManifestUi();
-                updateManifestStatus();
-            }
-
-            function reorderBlueprint(type, blueprintId, delta) {
-                const state = blueprintState[type];
-                if (!state) {
-                    return;
-                }
-                const next = [...state.selected];
-                const index = next.indexOf(blueprintId);
-                if (index === -1) {
-                    return;
-                }
-                const target = index + delta;
-                if (target < 0 || target >= next.length) {
-                    return;
-                }
-                const [entry] = next.splice(index, 1);
-                next.splice(target, 0, entry);
-                state.selected = next;
-                if (type === 'movie') {
-                    movieBlueprintsTouched = true;
-                } else {
-                    seriesBlueprintsTouched = true;
-                }
-                renderBlueprintLists();
-                updateManifestPreview();
-                updateManifestUi();
-                updateManifestStatus();
-            }
-
-            function sanitizeBlueprintSelection(type, selection) {
-                const options = blueprintOptions[type] || [];
-                const validIds = new Set(options.map((option) => option.id).filter(Boolean));
-                const clean = [];
-                if (Array.isArray(selection)) {
-                    selection.forEach((value) => {
-                        if (typeof value !== 'string') {
-                            return;
-                        }
-                        const trimmed = value.trim();
-                        if (!trimmed || !validIds.has(trimmed) || clean.includes(trimmed)) {
-                            return;
-                        }
-                        clean.push(trimmed);
-                    });
-                }
-                return clean;
-            }
-
-            function syncBlueprintsFromStatus() {
-                if (!profileStatus) {
-                    return;
-                }
-                const raw = profileStatus.discoveryBlueprints && typeof profileStatus.discoveryBlueprints === 'object'
-                    ? profileStatus.discoveryBlueprints
-                    : {};
-
-                ['movie', 'series'].forEach((type) => {
-                    const section = raw[type] && typeof raw[type] === 'object' ? raw[type] : {};
-                    if (Array.isArray(section.available) && section.available.length) {
-                        blueprintOptions[type] = section.available
-                            .map((option) => ({
-                                id: typeof option.id === 'string' ? option.id : '',
-                                label: typeof option.label === 'string' ? option.label : '',
-                                description: typeof option.description === 'string' ? option.description : '',
-                            }))
-                            .filter((option) => option.id);
-                    }
-                    const touched = type === 'movie' ? movieBlueprintsTouched : seriesBlueprintsTouched;
-                    if (!touched && Array.isArray(section.selected)) {
-                        blueprintState[type].selected = sanitizeBlueprintSelection(
-                            type,
-                            section.selected,
-                        );
-                    } else {
-                        blueprintState[type].selected = sanitizeBlueprintSelection(
-                            type,
-                            blueprintState[type].selected,
-                        );
-                    }
-                });
-                renderBlueprintLists();
             }
 
             function syncHistoryLimitFromStatus() {
@@ -1584,32 +1155,6 @@ CONFIG_TEMPLATE = dedent(
                     historySlider.value = String(limit);
                 }
                 historyValue.textContent = formatHistoryLimit(limit);
-            }
-
-            function syncPreferencesFromStatus() {
-                if (!profileStatus) {
-                    return;
-                }
-                if (!moviesToggleTouched && typeof profileStatus.moviesEnabled === 'boolean') {
-                    moviesToggle.checked = profileStatus.moviesEnabled;
-                }
-                if (!seriesToggleTouched && typeof profileStatus.seriesEnabled === 'boolean') {
-                    seriesToggle.checked = profileStatus.seriesEnabled;
-                }
-                if (!rotationTouched && profileStatus.rotationMode) {
-                    const value = profileStatus.rotationMode === 'expand' ? 'expand' : 'refresh';
-                    rotationSelect.value = value;
-                }
-                if (!suggestionTouched) {
-                    const cooldown = Number(profileStatus.suggestionCooldownDays);
-                    if (Number.isFinite(cooldown) && cooldown >= 0) {
-                        suggestionSlider.value = String(cooldown);
-                        suggestionValue.textContent = formatCooldownDays(cooldown);
-                    }
-                }
-                syncBlueprintsFromStatus();
-                updateManifestUi();
-                updateManifestStatus();
             }
 
             async function copyToClipboard(value) {
@@ -1644,20 +1189,6 @@ CONFIG_TEMPLATE = dedent(
                     return '';
                 }
                 return `${numberFormatter.format(Math.round(numeric))} plays`;
-            }
-
-            function formatCooldownDays(value) {
-                const numeric = Number(value);
-                if (!Number.isFinite(numeric) || numeric < 0) {
-                    return '';
-                }
-                if (numeric === 0) {
-                    return 'Off';
-                }
-                if (numeric === 1) {
-                    return '1 day';
-                }
-                return `${numeric} days`;
             }
 
             function formatSeconds(seconds) {
@@ -1927,13 +1458,9 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
         "openrouterModel": settings.openrouter_model,
         "catalogCount": settings.catalog_count,
         "catalogItemCount": settings.catalog_item_count,
-        "moviesEnabled": settings.enable_movie_catalogs,
-        "seriesEnabled": settings.enable_series_catalogs,
         "traktHistoryLimit": settings.trakt_history_limit,
         "refreshIntervalSeconds": settings.refresh_interval_seconds,
         "responseCacheSeconds": settings.response_cache_seconds,
-        "rotationMode": settings.catalog_rotation_mode,
-        "suggestionCooldownDays": settings.suggestion_cooldown_days,
         "traktAccessToken": settings.trakt_access_token or "",
         "traktLoginAvailable": bool(
             settings.trakt_client_id and settings.trakt_client_secret
@@ -1942,12 +1469,6 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
         "metadataAddon": (
             str(settings.metadata_addon_url) if settings.metadata_addon_url else ""
         ),
-        "blueprintOptions": {
-            "movie": blueprint_options_payload("movie"),
-            "series": blueprint_options_payload("series"),
-        },
-        "movieBlueprints": default_blueprint_ids("movie"),
-        "seriesBlueprints": default_blueprint_ids("series"),
     }
     defaults_json = json.dumps(defaults).replace("</", "<\\/")
 
