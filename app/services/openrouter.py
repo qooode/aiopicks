@@ -22,7 +22,7 @@ SYSTEM_PROMPT = (
 )
 
 USER_PROMPT_TEMPLATE = """
-You are helping a power user discover new titles based on their Trakt history.
+You are the trusted cinephile friend helping a power user discover new titles based on their Trakt history.
 
 Trakt profile summary (generated at {generated_at} UTC):
 - Total movies logged: {movie_total}
@@ -34,14 +34,14 @@ Trakt profile summary (generated at {generated_at} UTC):
 
 Instructions:
 1. Generate {catalog_count} movie catalogs AND {catalog_count} series catalogs.
-2. Use the random seed `{seed}` to introduce surprise—shuffle sequencing, bend genres, or surface overlooked regional scenes that still feel earned for this viewer.
+2. Use the random seed `{seed}` to add gentle variety—shuffle sequencing or spotlight nearby corners of their taste without forcing jarring leaps.
 3. Each catalog must include EXACTLY {items_per_catalog} strong picks with real titles and release years.
 4. Keep each description to a single crisp sentence (max ~16 words) to conserve tokens, even when {items_per_catalog} is large.
-5. Craft each catalog title as a personal nod to this viewer—reference their standout genres, languages, or specific films/series they love while signalling the fresh angle you’re taking on their taste.
-6. Every title must include at least one concrete hook from their history (a cited title, city, language, character, actor, etc.) and steer clear of vague buzzwords or generic marketing phrases such as "action-packed", "epic journey", "gems", "discover", "explore", "must-watch", "binge", "series to dive into", or similar filler.
-7. Keep the titles confident and conversational without using tentative phrasing like "you may" or "you might". Vary the structure so no two titles recycle the same cadence, and never begin a title with "Your" or another possessive pronoun.
-8. Write titles in natural sentence case (capitalize the first word and proper nouns only), keeping the rest lower-case unless grammar requires otherwise.
-9. Center each catalog on a vivid, specific micro-theme or narrative that ties back to their logged tastes while pushing them toward unexpected adjacent discoveries. Avoid broad buckets like "action adventures" or "fantasy journeys".
+5. Title each catalog like a thoughtful recommendation from a cinephile friend; nod to the viewer’s signature loves only when it genuinely strengthens the hook.
+6. Keep titles confident and conversational, steer clear of marketing fluff, vary cadence, and never open with "Your" or another possessive pronoun.
+7. Write titles in natural sentence case (capitalize the first word and proper nouns only), keeping the rest lower-case unless grammar requires otherwise.
+8. Ground every catalog in a clear, taste-aligned theme that a real fan would recognize, avoiding contrived genre mash-ups or whiplash pivots.
+9. Let each description briefly explain why the picks belong together, focusing on tone, craft, or shared sensibilities that match the viewer.
 10. Treat the viewer's history as inspiration, not a shopping list—avoid repeating titles mentioned above unless a sequel or continuation is essential, and spotlight why each new pick connects to their tastes.
 11. Lean into discovery: ensure at least 60% of every catalog consists of fresh-to-viewer surprises rather than comfort rewatches.
 12. For each item include only its real title, type, release year, and a concise description. Do not invent IDs, posters, or runtimes—the server enriches entries with the configured metadata add-on (for example, Cinemeta).
@@ -117,8 +117,8 @@ class OpenRouterClient:
 
         payload = {
             "model": resolved_model,
-            "temperature": 1.1,
-            "top_p": 0.9,
+            "temperature": 0.7,
+            "top_p": 0.8,
             "max_output_tokens": self._estimate_initial_token_budget(
                 catalog_count, item_target
             ),
