@@ -37,7 +37,8 @@ Instructions:
 3. Each catalog must include EXACTLY {items_per_catalog} strong picks with real titles and release years.
 4. Keep each description to a single crisp sentence (max ~16 words) to conserve tokens, even when {items_per_catalog} is large.
 5. Title each catalog like a thoughtful recommendation from a cinephile friend; nod to the viewer’s signature loves only when it genuinely strengthens the hook and gently spotlight why the set feels made for them.
-6. Apply the following title craftsmanship rules to every catalog:
+6. Keep every catalog anchored to a clearly defined micro-theme—call out a precise mood, locale, era, subgenre twist, or craft focus (for example "Seoul neon revenge thrillers" instead of "Korean cinema's dark side").
+7. Apply the following title craftsmanship rules to every catalog:
    - Create a specific, eye-catching theme in 4–8 words using simple, everyday language that anyone can understand, keeping the angle clear yet not overly narrow.
    - Make titles vivid, unique, and conversational—mix short punchy phrasing with more descriptive flows without sounding promotional.
    - Use natural sentence case: capitalize only the first word and proper nouns, keep everything else lower-case, and never use periods.
@@ -46,13 +47,13 @@ Instructions:
    - Limit commas so that at most one in five titles includes one, never end a title with a comma, and keep titles free of periods.
    - Vary opening words across the set, ensure fewer than one in five titles starts with "when" or "what", and steer clear of repeating patterns such as "X who Y" or "X with Y" back-to-back.
    - Keep grammar clean, flow natural, and avoid overusing pronouns like "their", "them", or "why"; make the titles feel like recommendations a friend would share.
-7. Keep titles confident and conversational, steer clear of marketing fluff, and never open with "Your" or another possessive pronoun.
-8. Ground every catalog in a clear, taste-aligned theme that a real fan would recognize, avoiding contrived genre mash-ups or whiplash pivots.
-9. Let each description briefly explain why the picks belong together, focusing on tone, craft, or shared sensibilities that match the viewer, and speak directly to them with a warm second-person voice that references the provided taste signals when helpful.
-10. Treat the viewer's history as inspiration, not a shopping list—lean on the taste signals above and avoid repeating the recent standout titles unless a sequel or continuation is essential.
-11. Lean into discovery: ensure at least 60% of every catalog consists of fresh-to-viewer surprises rather than comfort rewatches.
-12. For each item include only its real title, type, release year, and a concise description. Do not invent IDs, posters, or runtimes—the server enriches entries with the configured metadata add-on (for example, Cinemeta).
-13. Blend beloved flavours with adventurous outliers aligned to their favourite genres, languages, and decades; favour acclaimed deep cuts, international gems, or under-streamed entries that still feel on-brand.
+8. Keep titles confident and conversational, steer clear of marketing fluff, and never open with "Your" or another possessive pronoun.
+9. Ground every catalog in a clear, taste-aligned theme that a real fan would recognize, avoiding contrived genre mash-ups or whiplash pivots, and spell out the specific lens connecting the picks.
+10. Let each description briefly explain why the picks belong together, highlighting the niche angle (era, region, creative movement, tonal mix, or craft focus) that makes the set feel handpicked, and speak directly to them with a warm second-person voice that references the provided taste signals when helpful.
+11. Treat the viewer's history as inspiration, not a shopping list—lean on the taste signals above and avoid repeating the recent standout titles unless a sequel or continuation is essential.
+12. Lean into discovery: ensure at least 60% of every catalog consists of fresh-to-viewer surprises rather than comfort rewatches.
+13. For each item include only its real title, type, release year, and a concise description. Do not invent IDs, posters, or runtimes—the server enriches entries with the configured metadata add-on (for example, Cinemeta).
+14. Blend beloved flavours with adventurous outliers aligned to their favourite genres, languages, and decades; favour acclaimed deep cuts, international gems, or under-streamed entries that still feel on-brand.
 
 Respond with JSON using this structure:
 {{
