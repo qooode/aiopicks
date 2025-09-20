@@ -37,8 +37,16 @@ Instructions:
 3. Each catalog must include EXACTLY {items_per_catalog} strong picks with real titles and release years.
 4. Keep each description to a single crisp sentence (max ~16 words) to conserve tokens, even when {items_per_catalog} is large.
 5. Title each catalog like a thoughtful recommendation from a cinephile friend; nod to the viewer’s signature loves only when it genuinely strengthens the hook.
-6. Keep titles confident and conversational, steer clear of marketing fluff, vary cadence, and never open with "Your" or another possessive pronoun.
-7. Write titles in natural sentence case (capitalize the first word and proper nouns only), keeping the rest lower-case unless grammar requires otherwise.
+6. Apply the following title craftsmanship rules to every catalog:
+   - Create a specific, eye-catching theme in 4–8 words using simple, everyday language that anyone can understand, keeping the angle clear yet not overly narrow.
+   - Make titles vivid, unique, and conversational—mix short punchy phrasing with more descriptive flows without sounding promotional.
+   - Use natural sentence case: capitalize only the first word and proper nouns, keep everything else lower-case, and never use periods.
+   - Avoid complex or pretentious vocabulary, childish phrasing, or generic angles like "interesting movies"; aim for hooks adults would trade with friends.
+   - Use everyday connectors—articles, prepositions, and casual turns of phrase—to keep the language flowing like real conversation.
+   - Limit commas so that at most one in five titles includes one, never end a title with a comma, and keep titles free of periods.
+   - Vary opening words across the set, ensure fewer than one in five titles starts with "when" or "what", and steer clear of repeating patterns such as "X who Y" or "X with Y" back-to-back.
+   - Keep grammar clean, flow natural, and avoid overusing pronouns like "their", "them", or "why"; make the titles feel like recommendations a friend would share.
+7. Keep titles confident and conversational, steer clear of marketing fluff, and never open with "Your" or another possessive pronoun.
 8. Ground every catalog in a clear, taste-aligned theme that a real fan would recognize, avoiding contrived genre mash-ups or whiplash pivots.
 9. Let each description briefly explain why the picks belong together, focusing on tone, craft, or shared sensibilities that match the viewer.
 10. Treat the viewer's history as inspiration, not a shopping list—lean on the taste signals above and avoid repeating the recent standout titles unless a sequel or continuation is essential.
