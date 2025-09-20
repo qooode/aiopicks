@@ -8,7 +8,7 @@ import logging
 import secrets
 from contextlib import suppress
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence
 
@@ -24,7 +24,17 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config import Settings
-from ..db_models import CatalogRecord, Profile
+from ..db_models import CatalogRecord, Profile, RecommendationRecord
+from ..discovery import (
+    DiscoveryBlueprint,
+    blueprint_options_payload,
+    build_selection_payload,
+    default_blueprint_ids,
+    get_blueprint,
+    sanitize_blueprint_selection,
+    selection_from_payload,
+    summarise_blueprints,
+)
 from ..models import Catalog, CatalogBundle, CatalogItem
 from ..utils import slugify
 from .metadata_addon import MetadataAddonClient, MetadataMatch
@@ -100,6 +110,56 @@ class ManifestConfig(BaseModel):
             "cinemetaUrl",
         ),
     )
+    movies_enabled: bool | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "moviesEnabled",
+            "enableMovies",
+            "movieRows",
+        ),
+    )
+    series_enabled: bool | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "seriesEnabled",
+            "enableSeries",
+            "seriesRows",
+        ),
+    )
+    rotation_mode: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "rotationMode",
+            "catalogRotation",
+            "rotation",
+        ),
+    )
+    movie_blueprints: list[str] | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "movieBlueprints",
+            "movieThemes",
+            "movieLanes",
+        ),
+    )
+    series_blueprints: list[str] | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "seriesBlueprints",
+            "seriesThemes",
+            "seriesLanes",
+        ),
+    )
+    suggestion_cooldown_days: int | None = Field(
+        default=None,
+        ge=0,
+        le=365,
+        validation_alias=AliasChoices(
+            "suggestionCooldown",
+            "cooldownDays",
+            "cooldown",
+        ),
+    )
 
     @classmethod
     def from_query(cls, params: Mapping[str, str]) -> "ManifestConfig":
@@ -120,6 +180,7 @@ class ManifestConfig(BaseModel):
         "refresh_interval",
         "response_cache",
         "trakt_history_limit",
+        "suggestion_cooldown_days",
         mode="before",
     )
     @classmethod
@@ -141,6 +202,7 @@ class ManifestConfig(BaseModel):
         "trakt_client_id",
         "trakt_access_token",
         "metadata_addon_url",
+        "rotation_mode",
         mode="before",
     )
     @classmethod
@@ -151,6 +213,51 @@ class ManifestConfig(BaseModel):
             stripped = value.strip()
             return stripped or None
         return value
+
+    @field_validator("movies_enabled", "series_enabled", mode="before")
+    @classmethod
+    def _parse_optional_bool(cls, value: object) -> object:
+        if value is None or value == "":
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"1", "true", "yes", "on", "enable", "enabled"}:
+                return True
+            if lowered in {"0", "false", "no", "off", "disable", "disabled"}:
+                return False
+        raise ValueError("Value must be a boolean")
+
+    @field_validator("movie_blueprints", "series_blueprints", mode="before")
+    @classmethod
+    def _parse_blueprint_selection(cls, value: object) -> object:
+        if value is None or value == "":
+            return None
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        if isinstance(value, Sequence):
+            cleaned: list[str] = []
+            for entry in value:
+                if isinstance(entry, str):
+                    trimmed = entry.strip()
+                    if trimmed:
+                        cleaned.append(trimmed)
+            return cleaned
+        raise ValueError("Blueprint selection must be a list or comma separated string")
+
+    @field_validator("rotation_mode")
+    @classmethod
+    def _validate_rotation_mode(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalised = value.strip().lower()
+            if normalised in {"refresh", "expand"}:
+                return normalised
+        raise ValueError("Rotation mode must be 'refresh' or 'expand'")
 
 
 @dataclass
@@ -170,6 +277,12 @@ class ProfileState:
     next_refresh_at: datetime | None
     last_refreshed_at: datetime | None
     metadata_addon_url: str | None = None
+    enable_movie_catalogs: bool = True
+    enable_series_catalogs: bool = True
+    rotation_mode: str = "refresh"
+    suggestion_cooldown_days: int = 45
+    movie_blueprints: list[str] = field(default_factory=list)
+    series_blueprints: list[str] = field(default_factory=list)
     trakt_movie_history_count: int = 0
     trakt_show_history_count: int = 0
     trakt_history_refreshed_at: datetime | None = None
@@ -211,6 +324,10 @@ class ProfileStatus:
             "responseCacheSeconds": self.state.response_cache_seconds,
             "metadataAddon": self.state.metadata_addon_url,
             "traktHistoryLimit": self.state.trakt_history_limit,
+            "moviesEnabled": self.state.enable_movie_catalogs,
+            "seriesEnabled": self.state.enable_series_catalogs,
+            "rotationMode": self.state.rotation_mode,
+            "suggestionCooldownDays": self.state.suggestion_cooldown_days,
             "traktHistory": self._history_payload(),
             "lastRefreshedAt": (
                 self.state.last_refreshed_at.isoformat() if self.state.last_refreshed_at else None
@@ -222,6 +339,16 @@ class ProfileStatus:
             "needsRefresh": self.needs_refresh,
             "refreshing": self.refreshing,
             "ready": self.has_catalogs and not self.refreshing,
+            "discoveryBlueprints": {
+                "movie": {
+                    "selected": self.state.movie_blueprints,
+                    "available": blueprint_options_payload("movie"),
+                },
+                "series": {
+                    "selected": self.state.series_blueprints,
+                    "available": blueprint_options_payload("series"),
+                },
+            },
         }
 
     def _history_payload(self) -> dict[str, Any]:
@@ -476,18 +603,48 @@ class CatalogService:
             snapshot=snapshot,
         )
 
+        movie_blueprints = (
+            self._resolve_blueprints(state, "movie")
+            if state.enable_movie_catalogs
+            else []
+        )
+        series_blueprints = (
+            self._resolve_blueprints(state, "series")
+            if state.enable_series_catalogs
+            else []
+        )
+        movie_catalog_target = (
+            len(movie_blueprints) if state.enable_movie_catalogs else 0
+        )
+        series_catalog_target = (
+            len(series_blueprints) if state.enable_series_catalogs else 0
+        )
+
+        if movie_catalog_target == 0 and series_catalog_target == 0:
+            await self._store_catalogs(state, {"movie": {}, "series": {}})
+            return
+
         summary = self._build_summary(
             movie_history,
             show_history,
             state=state,
-            catalog_count=state.catalog_count,
+            movie_catalog_count=movie_catalog_target,
+            series_catalog_count=series_catalog_target,
             catalog_item_count=state.catalog_item_count,
+            movie_blueprints=movie_blueprints,
+            series_blueprints=series_blueprints,
         )
         seed = secrets.token_hex(4)
         catalogs: dict[str, dict[str, Catalog]] | None = None
         metadata_url = state.metadata_addon_url or self._default_metadata_addon_url
         watched_index = self._build_watched_index(movie_history, show_history)
-        exclusion_payload = self._serialise_watched_index(watched_index)
+        exclusions = self._serialise_watched_index(watched_index)
+        recommendation_exclusions = await self._load_recent_recommendation_exclusions(
+            state
+        )
+        exclusion_payload = self._merge_exclusions(
+            exclusions, recommendation_exclusions
+        )
 
         try:
             bundle = await self._ai.generate_catalogs(
@@ -497,7 +654,16 @@ class CatalogService:
                 model=state.openrouter_model,
                 exclusions=exclusion_payload,
             )
-            catalogs = self._bundle_to_dict(bundle)
+            catalogs = self._apply_blueprint_alignment(
+                bundle,
+                movie_blueprints=movie_blueprints,
+                series_blueprints=series_blueprints,
+                seed=seed,
+            )
+            if not state.enable_movie_catalogs:
+                catalogs["movie"] = {}
+            if not state.enable_series_catalogs:
+                catalogs["series"] = {}
             await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
             if not (catalogs["movie"] or catalogs["series"]):
                 logger.warning(
@@ -519,6 +685,10 @@ class CatalogService:
                 show_history,
                 seed=seed,
                 item_limit=state.catalog_item_count,
+                include_movies=state.enable_movie_catalogs,
+                include_series=state.enable_series_catalogs,
+                movie_blueprints=movie_blueprints,
+                series_blueprints=series_blueprints,
             )
             await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
 
@@ -532,30 +702,92 @@ class CatalogService:
         now = datetime.utcnow()
         scoped_catalogs = self._scope_catalog_payloads(state.id, catalogs)
         async with self._session_factory() as session:
-            await session.execute(
-                delete(CatalogRecord).where(CatalogRecord.profile_id == state.id)
+            stmt = (
+                select(CatalogRecord)
+                .where(CatalogRecord.profile_id == state.id)
+                .order_by(CatalogRecord.content_type, CatalogRecord.position)
             )
-            for content_type, catalog_map in scoped_catalogs.items():
-                for position, catalog in enumerate(catalog_map.values()):
-                    payload = catalog.model_dump(mode="json")
-                    expires_at = catalog.generated_at + timedelta(
-                        seconds=state.response_cache_seconds
-                    )
-                    record = CatalogRecord(
-                        profile_id=state.id,
-                        content_type=content_type,
-                        catalog_id=catalog.id,
-                        title=catalog.title,
-                        description=catalog.description,
-                        seed=catalog.seed,
-                        position=position,
-                        payload=payload,
-                        generated_at=catalog.generated_at,
-                        expires_at=expires_at,
-                        created_at=now,
-                        updated_at=now,
-                    )
-                    session.add(record)
+            result = await session.execute(stmt)
+            existing_records = result.scalars().all()
+            existing_by_type: dict[str, list[CatalogRecord]] = {"movie": [], "series": []}
+            for record in existing_records:
+                existing_by_type.setdefault(record.content_type, []).append(record)
+
+            final_catalogs: dict[str, dict[str, Catalog]] = {"movie": {}, "series": {}}
+
+            if state.rotation_mode == "refresh":
+                for content_type, catalog_map in scoped_catalogs.items():
+                    new_catalogs = list(catalog_map.values())
+                    current_records = existing_by_type.get(content_type, [])
+                    for position, catalog in enumerate(new_catalogs):
+                        stable_id = catalog.id
+                        if position < len(current_records):
+                            existing = current_records[position]
+                            stable_id = existing.catalog_id
+                        updated_catalog = catalog.model_copy(update={"id": stable_id})
+                        payload = updated_catalog.model_dump(mode="json")
+                        expires_at = updated_catalog.generated_at + timedelta(
+                            seconds=state.response_cache_seconds
+                        )
+                        if position < len(current_records):
+                            record = current_records[position]
+                            record.catalog_id = stable_id
+                            record.title = updated_catalog.title
+                            record.description = updated_catalog.description
+                            record.seed = updated_catalog.seed
+                            record.position = position
+                            record.payload = payload
+                            record.generated_at = updated_catalog.generated_at
+                            record.expires_at = expires_at
+                            record.updated_at = now
+                        else:
+                            record = CatalogRecord(
+                                profile_id=state.id,
+                                content_type=content_type,
+                                catalog_id=stable_id,
+                                title=updated_catalog.title,
+                                description=updated_catalog.description,
+                                seed=updated_catalog.seed,
+                                position=position,
+                                payload=payload,
+                                generated_at=updated_catalog.generated_at,
+                                expires_at=expires_at,
+                                created_at=now,
+                                updated_at=now,
+                            )
+                            session.add(record)
+                        final_catalogs[content_type][stable_id] = updated_catalog
+                    for record in current_records[len(new_catalogs) :]:
+                        await session.delete(record)
+            else:
+                await session.execute(
+                    delete(CatalogRecord).where(CatalogRecord.profile_id == state.id)
+                )
+                for content_type, catalog_map in scoped_catalogs.items():
+                    for position, catalog in enumerate(catalog_map.values()):
+                        payload = catalog.model_dump(mode="json")
+                        expires_at = catalog.generated_at + timedelta(
+                            seconds=state.response_cache_seconds
+                        )
+                        record = CatalogRecord(
+                            profile_id=state.id,
+                            content_type=content_type,
+                            catalog_id=catalog.id,
+                            title=catalog.title,
+                            description=catalog.description,
+                            seed=catalog.seed,
+                            position=position,
+                            payload=payload,
+                            generated_at=catalog.generated_at,
+                            expires_at=expires_at,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                        session.add(record)
+                        final_catalogs[content_type][catalog.id] = catalog
+
+            await self._record_recommendations(session, state, final_catalogs)
+
             next_refresh = now + timedelta(seconds=state.refresh_interval_seconds)
             await session.execute(
                 update(Profile)
@@ -567,6 +799,116 @@ class CatalogService:
                 )
             )
             await session.commit()
+
+    async def _record_recommendations(
+        self,
+        session: AsyncSession,
+        state: ProfileState,
+        catalogs: dict[str, dict[str, Catalog]],
+    ) -> None:
+        now = datetime.utcnow()
+        stmt = select(RecommendationRecord).where(
+            RecommendationRecord.profile_id == state.id
+        )
+        result = await session.execute(stmt)
+        existing = {
+            (record.content_type, record.fingerprint): record
+            for record in result.scalars().all()
+        }
+
+        for content_type, catalog_map in catalogs.items():
+            for catalog in catalog_map.values():
+                for item in catalog.items:
+                    fingerprints = self._catalog_item_fingerprints(item)
+                    if not fingerprints:
+                        continue
+                    title = item.display_title()
+                    for fingerprint in fingerprints:
+                        key = (content_type, fingerprint)
+                        record = existing.get(key)
+                        if record is not None:
+                            record.recommended_at = now
+                            if title and record.title != title:
+                                record.title = title
+                            continue
+                        record = RecommendationRecord(
+                            profile_id=state.id,
+                            content_type=content_type,
+                            fingerprint=fingerprint,
+                            title=title,
+                            recommended_at=now,
+                        )
+                        session.add(record)
+                        existing[key] = record
+
+        await self._purge_old_recommendations(session, state)
+
+    async def _purge_old_recommendations(
+        self, session: AsyncSession, state: ProfileState
+    ) -> None:
+        retention_days = max(state.suggestion_cooldown_days * 2, 90)
+        cutoff = datetime.utcnow() - timedelta(days=retention_days)
+        await session.execute(
+            delete(RecommendationRecord).where(
+                RecommendationRecord.profile_id == state.id,
+                RecommendationRecord.recommended_at < cutoff,
+            )
+        )
+
+    async def _load_recent_recommendation_exclusions(
+        self, state: ProfileState
+    ) -> dict[str, dict[str, Any]]:
+        if state.suggestion_cooldown_days <= 0:
+            return {}
+        cutoff = datetime.utcnow() - timedelta(days=state.suggestion_cooldown_days)
+        async with self._session_factory() as session:
+            stmt = select(RecommendationRecord).where(
+                RecommendationRecord.profile_id == state.id,
+                RecommendationRecord.recommended_at >= cutoff,
+            )
+            result = await session.execute(stmt)
+            records = result.scalars().all()
+
+        index: dict[str, dict[str, Any]] = {}
+        for record in records:
+            section = index.setdefault(record.content_type, {"fingerprints": set(), "titles": []})
+            section["fingerprints"].add(record.fingerprint)
+            if record.title:
+                title = record.title.strip()
+                if title and title not in section["titles"]:
+                    section["titles"].append(title)
+
+        payload: dict[str, dict[str, Any]] = {}
+        for content_type, data in index.items():
+            entry: dict[str, Any] = {}
+            fingerprints = data.get("fingerprints", set())
+            if fingerprints:
+                entry["fingerprints"] = sorted(fingerprints)
+            titles = data.get("titles", [])
+            if titles:
+                trimmed = titles[:24]
+                entry["titles"] = trimmed
+                entry["recent_titles"] = trimmed
+            if entry:
+                payload[content_type] = entry
+        return payload
+
+    def _catalog_item_fingerprints(self, item: CatalogItem) -> set[str]:
+        prefix = "movie" if item.type == "movie" else "series"
+        fingerprints: set[str] = set()
+        if item.imdb_id:
+            fingerprints.add(f"{prefix}:imdb:{item.imdb_id.strip().lower()}")
+        if item.trakt_id:
+            fingerprints.add(f"{prefix}:trakt:{item.trakt_id}")
+        if item.tmdb_id:
+            fingerprints.add(f"{prefix}:tmdb:{item.tmdb_id}")
+        title = (item.title or "").strip()
+        if title:
+            lowered = title.casefold()
+            fingerprints.add(f"{prefix}:title:{lowered}")
+            if item.year:
+                fingerprints.add(f"{prefix}:title:{lowered}:{item.year}")
+        return fingerprints
 
     def _scope_catalog_payloads(
         self, profile_id: str, catalogs: dict[str, dict[str, Catalog]]
@@ -590,6 +932,9 @@ class CatalogService:
             return self._profile_to_state(profile)
 
     def _profile_to_state(self, profile: Profile) -> ProfileState:
+        discovery_payload = getattr(profile, "discovery_blueprints", None)
+        movie_blueprints = selection_from_payload(discovery_payload, "movie")
+        series_blueprints = selection_from_payload(discovery_payload, "series")
         return ProfileState(
             id=profile.id,
             openrouter_api_key=profile.openrouter_api_key,
@@ -610,6 +955,28 @@ class CatalogService:
             next_refresh_at=profile.next_refresh_at,
             last_refreshed_at=profile.last_refreshed_at,
             metadata_addon_url=getattr(profile, "metadata_addon_url", None),
+            enable_movie_catalogs=getattr(
+                profile,
+                "enable_movie_catalogs",
+                self._settings.enable_movie_catalogs,
+            ),
+            enable_series_catalogs=getattr(
+                profile,
+                "enable_series_catalogs",
+                self._settings.enable_series_catalogs,
+            ),
+            rotation_mode=getattr(
+                profile,
+                "catalog_rotation_mode",
+                self._settings.catalog_rotation_mode,
+            ),
+            suggestion_cooldown_days=getattr(
+                profile,
+                "suggestion_cooldown_days",
+                self._settings.suggestion_cooldown_days,
+            ),
+            movie_blueprints=movie_blueprints,
+            series_blueprints=series_blueprints,
             trakt_movie_history_count=getattr(
                 profile, "trakt_movie_history_count", 0
             ),
@@ -985,6 +1352,25 @@ class CatalogService:
                         config.catalog_item_count
                         or self._settings.catalog_item_count
                     ),
+                    enable_movie_catalogs=(
+                        config.movies_enabled
+                        if config.movies_enabled is not None
+                        else self._settings.enable_movie_catalogs
+                    ),
+                    enable_series_catalogs=(
+                        config.series_enabled
+                        if config.series_enabled is not None
+                        else self._settings.enable_series_catalogs
+                    ),
+                    catalog_rotation_mode=(
+                        config.rotation_mode
+                        or self._settings.catalog_rotation_mode
+                    ),
+                    suggestion_cooldown_days=(
+                        config.suggestion_cooldown_days
+                        if config.suggestion_cooldown_days is not None
+                        else self._settings.suggestion_cooldown_days
+                    ),
                     refresh_interval_seconds=config.refresh_interval or self._settings.refresh_interval_seconds,
                     response_cache_seconds=config.response_cache or self._settings.response_cache_seconds,
                     trakt_client_id=config.trakt_client_id or self._settings.trakt_client_id,
@@ -998,6 +1384,23 @@ class CatalogService:
                     last_refreshed_at=None,
                     created_at=now,
                     updated_at=now,
+                )
+                movie_blueprints = (
+                    sanitize_blueprint_selection(
+                        config.movie_blueprints, "movie"
+                    )
+                    if config.movie_blueprints is not None
+                    else default_blueprint_ids("movie")
+                )
+                series_blueprints = (
+                    sanitize_blueprint_selection(
+                        config.series_blueprints, "series"
+                    )
+                    if config.series_blueprints is not None
+                    else default_blueprint_ids("series")
+                )
+                profile.discovery_blueprints = build_selection_payload(
+                    movie=movie_blueprints, series=series_blueprints
                 )
                 session.add(profile)
                 created = True
@@ -1026,6 +1429,38 @@ class CatalogService:
                 ):
                     profile.catalog_item_count = config.catalog_item_count
                     refresh_required = True
+                if (
+                    config.movies_enabled is not None
+                    and config.movies_enabled != getattr(
+                        profile, "enable_movie_catalogs", None
+                    )
+                ):
+                    profile.enable_movie_catalogs = config.movies_enabled
+                    refresh_required = True
+                if (
+                    config.series_enabled is not None
+                    and config.series_enabled != getattr(
+                        profile, "enable_series_catalogs", None
+                    )
+                ):
+                    profile.enable_series_catalogs = config.series_enabled
+                    refresh_required = True
+                if (
+                    config.rotation_mode is not None
+                    and config.rotation_mode != getattr(
+                        profile, "catalog_rotation_mode", None
+                    )
+                ):
+                    profile.catalog_rotation_mode = config.rotation_mode
+                    refresh_required = True
+                if (
+                    config.suggestion_cooldown_days is not None
+                    and config.suggestion_cooldown_days
+                    != getattr(profile, "suggestion_cooldown_days", None)
+                ):
+                    profile.suggestion_cooldown_days = (
+                        config.suggestion_cooldown_days
+                    )
                 if config.refresh_interval and config.refresh_interval != profile.refresh_interval_seconds:
                     profile.refresh_interval_seconds = config.refresh_interval
                 if config.response_cache and config.response_cache != profile.response_cache_seconds:
@@ -1047,6 +1482,32 @@ class CatalogService:
                     new_metadata_url = str(config.metadata_addon_url)
                     if new_metadata_url != getattr(profile, "metadata_addon_url", None):
                         profile.metadata_addon_url = new_metadata_url
+                        refresh_required = True
+                if (
+                    config.movie_blueprints is not None
+                    or config.series_blueprints is not None
+                ):
+                    current_payload = (
+                        profile.discovery_blueprints
+                        if isinstance(profile.discovery_blueprints, dict)
+                        else {}
+                    )
+                    current_movie = selection_from_payload(current_payload, "movie")
+                    current_series = selection_from_payload(current_payload, "series")
+                    new_movie = current_movie
+                    new_series = current_series
+                    if config.movie_blueprints is not None:
+                        new_movie = sanitize_blueprint_selection(
+                            config.movie_blueprints, "movie"
+                        )
+                    if config.series_blueprints is not None:
+                        new_series = sanitize_blueprint_selection(
+                            config.series_blueprints, "series"
+                        )
+                    if new_movie != current_movie or new_series != current_series:
+                        profile.discovery_blueprints = build_selection_payload(
+                            movie=new_movie, series=new_series
+                        )
                         refresh_required = True
                 if profile.next_refresh_at is None:
                     profile.next_refresh_at = now
@@ -1191,6 +1652,10 @@ class CatalogService:
                     trakt_history_limit=self._settings.trakt_history_limit,
                     catalog_count=self._settings.catalog_count,
                     catalog_item_count=self._settings.catalog_item_count,
+                    enable_movie_catalogs=self._settings.enable_movie_catalogs,
+                    enable_series_catalogs=self._settings.enable_series_catalogs,
+                    catalog_rotation_mode=self._settings.catalog_rotation_mode,
+                    suggestion_cooldown_days=self._settings.suggestion_cooldown_days,
                     refresh_interval_seconds=self._settings.refresh_interval_seconds,
                     response_cache_seconds=self._settings.response_cache_seconds,
                     metadata_addon_url=self._default_metadata_addon_url,
@@ -1198,6 +1663,10 @@ class CatalogService:
                     last_refreshed_at=None,
                     created_at=now,
                     updated_at=now,
+                )
+                profile.discovery_blueprints = build_selection_payload(
+                    movie=default_blueprint_ids("movie"),
+                    series=default_blueprint_ids("series"),
                 )
                 session.add(profile)
             else:
@@ -1214,6 +1683,32 @@ class CatalogService:
                 if getattr(profile, "catalog_item_count", None) != self._settings.catalog_item_count:
                     profile.catalog_item_count = self._settings.catalog_item_count
                     updated = True
+                if (
+                    getattr(profile, "enable_movie_catalogs", None)
+                    != self._settings.enable_movie_catalogs
+                ):
+                    profile.enable_movie_catalogs = self._settings.enable_movie_catalogs
+                    updated = True
+                if (
+                    getattr(profile, "enable_series_catalogs", None)
+                    != self._settings.enable_series_catalogs
+                ):
+                    profile.enable_series_catalogs = self._settings.enable_series_catalogs
+                    updated = True
+                if (
+                    getattr(profile, "catalog_rotation_mode", None)
+                    != self._settings.catalog_rotation_mode
+                ):
+                    profile.catalog_rotation_mode = self._settings.catalog_rotation_mode
+                    updated = True
+                if (
+                    getattr(profile, "suggestion_cooldown_days", None)
+                    != self._settings.suggestion_cooldown_days
+                ):
+                    profile.suggestion_cooldown_days = (
+                        self._settings.suggestion_cooldown_days
+                    )
+                    updated = True
                 if profile.refresh_interval_seconds != self._settings.refresh_interval_seconds:
                     profile.refresh_interval_seconds = self._settings.refresh_interval_seconds
                     updated = True
@@ -1225,6 +1720,12 @@ class CatalogService:
                     updated = True
                 if getattr(profile, "metadata_addon_url", None) != self._default_metadata_addon_url:
                     profile.metadata_addon_url = self._default_metadata_addon_url
+                    updated = True
+                if not isinstance(profile.discovery_blueprints, dict):
+                    profile.discovery_blueprints = build_selection_payload(
+                        movie=default_blueprint_ids("movie"),
+                        series=default_blueprint_ids("series"),
+                    )
                     updated = True
                 if profile.trakt_client_id != self._settings.trakt_client_id:
                     profile.trakt_client_id = self._settings.trakt_client_id
@@ -1239,11 +1740,92 @@ class CatalogService:
                     profile.updated_at = now
             await session.commit()
 
-    def _bundle_to_dict(self, bundle: CatalogBundle) -> dict[str, dict[str, Catalog]]:
-        return {
-            "movie": {catalog.id: catalog for catalog in bundle.movie_catalogs},
-            "series": {catalog.id: catalog for catalog in bundle.series_catalogs},
-        }
+    def _resolve_blueprints(
+        self, state: ProfileState, content_type: str
+    ) -> list[DiscoveryBlueprint]:
+        if content_type == "movie":
+            raw = list(state.movie_blueprints)
+        else:
+            raw = list(state.series_blueprints)
+        limit = max(state.catalog_count, 0)
+        if limit:
+            trimmed = raw[:limit]
+        else:
+            trimmed = []
+        blueprints: list[DiscoveryBlueprint] = []
+        seen: set[str] = set()
+        for blueprint_id in trimmed:
+            blueprint = get_blueprint(blueprint_id)
+            if (
+                blueprint is None
+                or not blueprint.supports(content_type)
+                or blueprint.id in seen
+            ):
+                continue
+            seen.add(blueprint.id)
+            blueprints.append(blueprint)
+        return blueprints
+
+    def _assign_catalogs_to_blueprints(
+        self,
+        catalogs: Sequence[Catalog],
+        blueprints: Sequence[DiscoveryBlueprint],
+        *,
+        content_type: str,
+        seed: str,
+    ) -> dict[str, Catalog]:
+        if not blueprints:
+            return {}
+        remaining = list(catalogs)
+        assigned: dict[str, Catalog] = {}
+        for blueprint in blueprints:
+            base_id = f"aiopicks-{content_type}-{blueprint.id}"
+            if remaining:
+                catalog = remaining.pop(0)
+            else:
+                catalog = Catalog(
+                    id=base_id,
+                    type=content_type,
+                    title=blueprint.label,
+                    description=(
+                        f"Waiting for fresh picks in the {blueprint.label.lower()} lane."
+                    ),
+                    seed=f"{seed}-{blueprint.id}",
+                    items=[],
+                    generated_at=datetime.utcnow(),
+                )
+            updates: dict[str, Any] = {"id": base_id}
+            if not catalog.items:
+                updates.setdefault("title", catalog.title or blueprint.label)
+                updates.setdefault(
+                    "description",
+                    catalog.description
+                    or f"Waiting for fresh picks in the {blueprint.label.lower()} lane.",
+                )
+            assigned[base_id] = catalog.model_copy(update=updates)
+        return assigned
+
+    def _apply_blueprint_alignment(
+        self,
+        bundle: CatalogBundle,
+        *,
+        movie_blueprints: Sequence[DiscoveryBlueprint],
+        series_blueprints: Sequence[DiscoveryBlueprint],
+        seed: str,
+    ) -> dict[str, dict[str, Catalog]]:
+        movie_catalogs = self._assign_catalogs_to_blueprints(
+            bundle.movie_catalogs,
+            movie_blueprints,
+            content_type="movie",
+            seed=seed,
+        )
+        series_catalogs = self._assign_catalogs_to_blueprints(
+            bundle.series_catalogs,
+            series_blueprints,
+            content_type="series",
+            seed=seed,
+        )
+        return {"movie": movie_catalogs, "series": series_catalogs}
 
     def _build_watched_index(
         self,
@@ -1264,9 +1846,51 @@ class CatalogService:
                 continue
             payload[content_type] = {
                 "fingerprints": sorted(data.fingerprints),
-                "recent_titles": data.recent_titles[:24],
             }
+            if data.recent_titles:
+                trimmed = data.recent_titles[:24]
+                payload[content_type]["recent_titles"] = trimmed
+                payload[content_type]["titles"] = trimmed
         return payload
+
+    def _merge_exclusions(
+        self,
+        base: dict[str, dict[str, Any]],
+        additions: dict[str, dict[str, Any]] | None,
+    ) -> dict[str, dict[str, Any]]:
+        if not additions:
+            return base
+        merged: dict[str, dict[str, Any]] = {}
+        for content_type in ("movie", "series"):
+            base_section = base.get(content_type, {})
+            addition_section = additions.get(content_type, {}) if additions else {}
+            fingerprints = set(base_section.get("fingerprints", []))
+            fingerprints.update(addition_section.get("fingerprints", []))
+            titles: list[str] = []
+            for source in (
+                base_section.get("recent_titles"),
+                base_section.get("titles"),
+                addition_section.get("recent_titles"),
+                addition_section.get("titles"),
+            ):
+                if isinstance(source, Sequence):
+                    for value in source:
+                        if not isinstance(value, str):
+                            continue
+                        trimmed = value.strip()
+                        if not trimmed or trimmed in titles:
+                            continue
+                        titles.append(trimmed)
+            section: dict[str, Any] = {}
+            if fingerprints:
+                section["fingerprints"] = sorted(fingerprints)
+            if titles:
+                limited = titles[:24]
+                section["recent_titles"] = limited
+                section["titles"] = limited
+            if section:
+                merged[content_type] = section
+        return merged
 
     def _index_history_items(
         self,
@@ -1328,8 +1952,11 @@ class CatalogService:
         show_history: list[dict[str, Any]],
         *,
         state: ProfileState,
-        catalog_count: int,
+        movie_catalog_count: int,
+        series_catalog_count: int,
         catalog_item_count: int,
+        movie_blueprints: Sequence[DiscoveryBlueprint] | None = None,
+        series_blueprints: Sequence[DiscoveryBlueprint] | None = None,
     ) -> dict[str, Any]:
         movie_profile = TraktClient.summarize_history(movie_history, key="movie")
         series_profile = TraktClient.summarize_history(show_history, key="show")
@@ -1349,7 +1976,9 @@ class CatalogService:
 
         summary: dict[str, Any] = {
             "generated_at": datetime.utcnow().isoformat(),
-            "catalog_count": catalog_count,
+            "catalog_count": max(movie_catalog_count, series_catalog_count),
+            "movie_catalog_count": movie_catalog_count,
+            "series_catalog_count": series_catalog_count,
             "catalog_item_count": catalog_item_count,
             "profile": {
                 "movies": movie_profile,
@@ -1360,6 +1989,18 @@ class CatalogService:
 
         if isinstance(state.trakt_history_snapshot, Mapping):
             summary["stats"] = state.trakt_history_snapshot
+
+        blueprint_sections: dict[str, list[dict[str, str]]] = {}
+        if movie_blueprints:
+            blueprint_sections["movie"] = summarise_blueprints(
+                movie_blueprints, "movie"
+            )
+        if series_blueprints:
+            blueprint_sections["series"] = summarise_blueprints(
+                series_blueprints, "series"
+            )
+        if blueprint_sections:
+            summary["blueprints"] = blueprint_sections
 
         return summary
 
@@ -1521,10 +2162,19 @@ class CatalogService:
         *,
         seed: str,
         item_limit: int,
+        include_movies: bool = True,
+        include_series: bool = True,
+        movie_blueprints: Sequence[DiscoveryBlueprint] | None = None,
+        series_blueprints: Sequence[DiscoveryBlueprint] | None = None,
     ) -> dict[str, dict[str, Catalog]]:
+        movie_blueprints = movie_blueprints or []
+        series_blueprints = series_blueprints or []
         catalogs: dict[str, dict[str, Catalog]] = {"movie": {}, "series": {}}
 
-        if movie_history:
+        movie_candidates: list[Catalog] = []
+        series_candidates: list[Catalog] = []
+
+        if include_movies and movie_history:
             catalog = self._history_catalog(
                 movie_history,
                 content_type="movie",
@@ -1532,9 +2182,9 @@ class CatalogService:
                 seed=seed,
                 item_limit=item_limit,
             )
-            catalogs["movie"][catalog.id] = catalog
+            movie_candidates.append(catalog)
 
-        if show_history:
+        if include_series and show_history:
             catalog = self._history_catalog(
                 show_history,
                 content_type="series",
@@ -1542,7 +2192,16 @@ class CatalogService:
                 seed=seed,
                 item_limit=item_limit,
             )
-            catalogs["series"][catalog.id] = catalog
+            series_candidates.append(catalog)
+
+        if include_movies:
+            catalogs["movie"] = self._assign_catalogs_to_blueprints(
+                movie_candidates, movie_blueprints, content_type="movie", seed=seed
+            )
+        if include_series:
+            catalogs["series"] = self._assign_catalogs_to_blueprints(
+                series_candidates, series_blueprints, content_type="series", seed=seed
+            )
 
         if not catalogs["movie"] and not catalogs["series"]:
             now = datetime.utcnow()

@@ -5,7 +5,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -35,6 +44,13 @@ class Profile(Base):
     catalog_item_count: Mapped[int] = mapped_column(Integer, default=8)
     refresh_interval_seconds: Mapped[int] = mapped_column(Integer, default=43_200)
     response_cache_seconds: Mapped[int] = mapped_column(Integer, default=1_800)
+    enable_movie_catalogs: Mapped[bool] = mapped_column(Boolean, default=True)
+    enable_series_catalogs: Mapped[bool] = mapped_column(Boolean, default=True)
+    catalog_rotation_mode: Mapped[str] = mapped_column(String(20), default="refresh")
+    suggestion_cooldown_days: Mapped[int] = mapped_column(Integer, default=45)
+    discovery_blueprints: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True
+    )
     metadata_addon_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     next_refresh_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -79,3 +95,28 @@ class CatalogRecord(Base):
     )
 
     profile: Mapped[Profile] = relationship(back_populates="catalogs")
+
+
+class RecommendationRecord(Base):
+    """Persisted record of recent recommendations to avoid repeats."""
+
+    __tablename__ = "recommendations"
+    __table_args__ = (
+        UniqueConstraint(
+            "profile_id",
+            "content_type",
+            "fingerprint",
+            name="uq_recommendation_fingerprint",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("profiles.id", ondelete="CASCADE")
+    )
+    content_type: Mapped[str] = mapped_column(String(16))
+    fingerprint: Mapped[str] = mapped_column(String(255))
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    recommended_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    profile: Mapped[Profile] = relationship(backref="recommendations")
