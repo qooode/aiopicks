@@ -24,13 +24,12 @@ SYSTEM_PROMPT = (
 USER_PROMPT_TEMPLATE = """
 You are the trusted cinephile friend helping a power user discover new titles based on their Trakt history.
 
-Trakt profile summary (generated at {generated_at} UTC):
-- Total movies logged: {movie_total}
-- Total series logged: {series_total}
-- Movie taste snapshot: top genres {movie_genres}; top languages {movie_languages}
-- Series taste snapshot: top genres {series_genres}; top languages {series_languages}
-- Recently watched movies: {recent_movies}
-- Recently watched series: {recent_series}
+Trakt insight snapshot (generated at {generated_at} UTC):
+- Lifetime footprint: {lifetime_summary}
+- Movie taste signals: {movie_taste_summary}
+- Recent movie standouts (avoid repeats unless a sequel/continuation is vital): {recent_movies}
+- Series taste signals: {series_taste_summary}
+- Recent series standouts (avoid repeats unless a sequel/continuation is vital): {recent_series}
 
 Instructions:
 1. Generate {catalog_count} movie catalogs AND {catalog_count} series catalogs.
@@ -42,9 +41,10 @@ Instructions:
 7. Write titles in natural sentence case (capitalize the first word and proper nouns only), keeping the rest lower-case unless grammar requires otherwise.
 8. Ground every catalog in a clear, taste-aligned theme that a real fan would recognize, avoiding contrived genre mash-ups or whiplash pivots.
 9. Let each description briefly explain why the picks belong together, focusing on tone, craft, or shared sensibilities that match the viewer.
-10. Treat the viewer's history as inspiration, not a shopping list—avoid repeating titles mentioned above unless a sequel or continuation is essential, and spotlight why each new pick connects to their tastes.
+10. Treat the viewer's history as inspiration, not a shopping list—lean on the taste signals above and avoid repeating the recent standout titles unless a sequel or continuation is essential.
 11. Lean into discovery: ensure at least 60% of every catalog consists of fresh-to-viewer surprises rather than comfort rewatches.
 12. For each item include only its real title, type, release year, and a concise description. Do not invent IDs, posters, or runtimes—the server enriches entries with the configured metadata add-on (for example, Cinemeta).
+13. Blend beloved flavours with adventurous outliers aligned to their favourite genres, languages, and decades; favour acclaimed deep cuts, international gems, or under-streamed entries that still feel on-brand.
 
 Respond with JSON using this structure:
 {{
@@ -100,16 +100,26 @@ class OpenRouterClient:
         if not resolved_key:
             raise RuntimeError("OpenRouter API key is required to generate catalogs")
 
+        movie_profile = profile.get("movies", {})
+        series_profile = profile.get("series", {})
+
         prompt = USER_PROMPT_TEMPLATE.format(
             generated_at=summary.get("generated_at"),
-            movie_total=profile.get("movies", {}).get("total"),
-            series_total=profile.get("series", {}).get("total"),
-            movie_genres=profile.get("movies", {}).get("top_genres"),
-            series_genres=profile.get("series", {}).get("top_genres"),
-            movie_languages=profile.get("movies", {}).get("top_languages"),
-            series_languages=profile.get("series", {}).get("top_languages"),
-            recent_movies=profile.get("movies", {}).get("top_titles"),
-            recent_series=profile.get("series", {}).get("top_titles"),
+            lifetime_summary=summary.get(
+                "lifetime_summary", "Lifetime stats unavailable."
+            ),
+            movie_taste_summary=movie_profile.get(
+                "taste_summary", "No strong movie signals captured yet."
+            ),
+            series_taste_summary=series_profile.get(
+                "taste_summary", "No strong series signals captured yet."
+            ),
+            recent_movies=movie_profile.get(
+                "recent_highlights", "No recent standouts captured."
+            ),
+            recent_series=series_profile.get(
+                "recent_highlights", "No recent standouts captured."
+            ),
             catalog_count=catalog_count,
             items_per_catalog=item_target,
             seed=seed,
