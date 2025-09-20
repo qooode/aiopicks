@@ -7,9 +7,10 @@ import hashlib
 import logging
 import secrets
 from contextlib import suppress
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from pydantic import (
     AliasChoices,
@@ -478,6 +479,7 @@ class CatalogService:
         summary = self._build_summary(
             movie_history,
             show_history,
+            state=state,
             catalog_count=state.catalog_count,
             catalog_item_count=state.catalog_item_count,
         )
@@ -1325,18 +1327,192 @@ class CatalogService:
         movie_history: list[dict[str, Any]],
         show_history: list[dict[str, Any]],
         *,
+        state: ProfileState,
         catalog_count: int,
         catalog_item_count: int,
     ) -> dict[str, Any]:
-        return {
+        movie_profile = TraktClient.summarize_history(movie_history, key="movie")
+        series_profile = TraktClient.summarize_history(show_history, key="show")
+
+        movie_profile["taste_summary"] = self._describe_taste_profile(
+            "movies", movie_profile, movie_history, key="movie"
+        )
+        series_profile["taste_summary"] = self._describe_taste_profile(
+            "series", series_profile, show_history, key="show"
+        )
+        movie_profile["recent_highlights"] = self._recent_title_summary(
+            movie_profile.get("top_titles")
+        )
+        series_profile["recent_highlights"] = self._recent_title_summary(
+            series_profile.get("top_titles")
+        )
+
+        summary: dict[str, Any] = {
             "generated_at": datetime.utcnow().isoformat(),
             "catalog_count": catalog_count,
             "catalog_item_count": catalog_item_count,
             "profile": {
-                "movies": TraktClient.summarize_history(movie_history, key="movie"),
-                "series": TraktClient.summarize_history(show_history, key="show"),
+                "movies": movie_profile,
+                "series": series_profile,
             },
+            "lifetime_summary": self._describe_lifetime_stats(state),
         }
+
+        if isinstance(state.trakt_history_snapshot, Mapping):
+            summary["stats"] = state.trakt_history_snapshot
+
+        return summary
+
+    def _describe_taste_profile(
+        self,
+        label: str,
+        profile: Mapping[str, Any],
+        history: list[dict[str, Any]],
+        *,
+        key: str,
+    ) -> str:
+        total = profile.get("total")
+        segments: list[str] = []
+        if isinstance(total, int) and total > 0:
+            segments.append(f"{total} logged {label}")
+
+        genre_values = self._format_counter_items(
+            profile.get("top_genres"), unit="plays"
+        )
+        if genre_values:
+            segments.append(f"leans into {self._join_list(genre_values)}")
+
+        language_values = self._format_counter_items(
+            profile.get("top_languages"), unit="entries"
+        )
+        if language_values:
+            segments.append(
+                f"comfortable with languages like {self._join_list(language_values)}"
+            )
+
+        country_values = self._format_counter_items(
+            profile.get("top_countries"), unit="productions"
+        )
+        if country_values:
+            segments.append(
+                f"often chooses releases from {self._join_list(country_values)}"
+            )
+
+        release_summary = self._describe_release_years(history, key=key)
+        if release_summary:
+            segments.append(release_summary)
+
+        runtime = profile.get("average_runtime")
+        if isinstance(runtime, int) and runtime > 0:
+            segments.append(f"prefers runtimes around {runtime} min")
+
+        last_watch = profile.get("last_watched_at")
+        if isinstance(last_watch, str):
+            segments.append(f"latest check-in {last_watch[:10]}")
+
+        if not segments:
+            return "No strong signals captured yet."
+        return "; ".join(segments)
+
+    @staticmethod
+    def _format_counter_items(
+        values: Any,
+        *,
+        limit: int = 4,
+        unit: str | None = None,
+    ) -> list[str]:
+        formatted: list[str] = []
+        if isinstance(values, Sequence):
+            for entry in values:
+                if not isinstance(entry, Sequence) or len(entry) < 2:
+                    continue
+                label, count = entry[0], entry[1]
+                if not isinstance(label, str) or not isinstance(count, int):
+                    continue
+                if count <= 0:
+                    continue
+                descriptor = f"{count}" if unit is None else f"{count} {unit}"
+                formatted.append(f"{label} ({descriptor})")
+                if len(formatted) >= limit:
+                    break
+        return formatted
+
+    def _describe_release_years(
+        self, history: list[dict[str, Any]], *, key: str
+    ) -> str | None:
+        years: list[int] = []
+        for entry in history:
+            media = entry.get(key)
+            if not isinstance(media, Mapping):
+                continue
+            year = media.get("year")
+            if isinstance(year, int) and 1900 <= year <= 2100:
+                years.append(year)
+        if not years:
+            return None
+        decade_counts = Counter((year // 10) * 10 for year in years)
+        if not decade_counts:
+            return None
+        top_decades = [
+            f"{decade}s ({count})" for decade, count in decade_counts.most_common(2)
+        ]
+        if not top_decades:
+            return None
+        return f"gravitates toward releases from {self._join_list(top_decades)}"
+
+    def _recent_title_summary(self, titles: Any, *, limit: int = 8) -> str:
+        if not isinstance(titles, Sequence):
+            return "No recent standouts captured."
+        filtered = [title for title in titles if isinstance(title, str) and title]
+        if not filtered:
+            return "No recent standouts captured."
+        trimmed = list(filtered[:limit])
+        if len(filtered) > limit:
+            trimmed[-1] = f"{trimmed[-1]}…"
+        return self._join_list(trimmed)
+
+    def _describe_lifetime_stats(self, state: ProfileState) -> str:
+        parts: list[str] = []
+        movie_total = state.trakt_movie_history_count
+        if isinstance(movie_total, int) and movie_total > 0:
+            parts.append(f"{movie_total:,} movies tracked overall")
+        show_total = state.trakt_show_history_count
+        if isinstance(show_total, int) and show_total > 0:
+            parts.append(f"{show_total:,} series tracked overall")
+
+        snapshot = state.trakt_history_snapshot
+        if isinstance(snapshot, Mapping):
+            episodes = snapshot.get("episodes")
+            if isinstance(episodes, Mapping):
+                episode_watched = episodes.get("watched")
+                if isinstance(episode_watched, int) and episode_watched > 0:
+                    parts.append(f"{episode_watched:,} episodes logged")
+            total_minutes = snapshot.get("totalMinutes")
+            if isinstance(total_minutes, int) and total_minutes > 0:
+                hours = total_minutes // 60
+                if hours > 0:
+                    parts.append(f"{hours:,} hours watched")
+
+        history_limit = state.trakt_history_limit
+        if isinstance(history_limit, int) and history_limit > 0:
+            parts.append(
+                f"current refresh samples the last {history_limit} plays per type"
+            )
+
+        if not parts:
+            return "Lifetime stats unavailable; lean on taste summaries above."
+        return "; ".join(parts)
+
+    @staticmethod
+    def _join_list(items: Sequence[str]) -> str:
+        filtered = [item for item in items if isinstance(item, str) and item]
+        if not filtered:
+            return ""
+        if len(filtered) == 1:
+            return filtered[0]
+        if len(filtered) == 2:
+            return " and ".join(filtered)
+        return ", ".join(filtered[:-1]) + f", and {filtered[-1]}"
 
     def _build_fallback_catalogs(
         self,
