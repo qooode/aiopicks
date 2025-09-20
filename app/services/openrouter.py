@@ -32,7 +32,7 @@ Trakt insight snapshot (generated at {generated_at} UTC):
 - Recent series standouts (avoid repeats unless a sequel/continuation is vital): {recent_series}
 
 Instructions:
-1. Generate {catalog_count} movie catalogs AND {catalog_count} series catalogs.
+1. {catalog_instruction}
 2. Use the random seed `{seed}` to add gentle variety—shuffle sequencing or spotlight nearby corners of their taste without forcing jarring leaps.
 3. Each catalog must include EXACTLY {items_per_catalog} strong picks with real titles and release years.
 4. Keep each description to a single crisp sentence (max ~16 words) to conserve tokens, even when {items_per_catalog} is large.
@@ -98,9 +98,24 @@ class OpenRouterClient:
     ) -> CatalogBundle:
         """Generate new catalogs using the configured model."""
 
-        catalog_count = summary.get("catalog_count", self._settings.catalog_count)
-        item_target = summary.get(
-            "catalog_item_count", self._settings.catalog_item_count
+        def _coerce_count(value: Any, fallback: int) -> int:
+            try:
+                coerced = int(value)
+            except (TypeError, ValueError):
+                return max(fallback, 0)
+            return max(coerced, 0)
+
+        default_count = _coerce_count(
+            summary.get("catalog_count"), self._settings.catalog_count
+        )
+        movie_target = _coerce_count(
+            summary.get("movie_catalog_count"), default_count
+        )
+        series_target = _coerce_count(
+            summary.get("series_catalog_count"), default_count
+        )
+        item_target = _coerce_count(
+            summary.get("catalog_item_count"), self._settings.catalog_item_count
         )
         profile = summary.get("profile", {})
 
@@ -111,6 +126,71 @@ class OpenRouterClient:
 
         movie_profile = profile.get("movies", {})
         series_profile = profile.get("series", {})
+        blueprints = summary.get("blueprints") or {}
+        movie_blueprints = blueprints.get("movie") or []
+        series_blueprints = blueprints.get("series") or []
+        if movie_blueprints:
+            movie_target = len(movie_blueprints)
+        if series_blueprints:
+            series_target = len(series_blueprints)
+
+        def _format_lane_lines(entries: list[dict[str, str]], label: str) -> list[str]:
+            lines: list[str] = []
+            for entry in entries:
+                lane_id = entry.get("id") or "lane"
+                lane_label = entry.get("label") or lane_id
+                prompt = entry.get("prompt") or "Focus on discovery-friendly new titles."
+                lines.append(
+                    f"- {lane_label} (`aiopicks-{label}-{lane_id}`): {prompt}"
+                )
+            return lines
+
+        if movie_target > 0 and series_target > 0:
+            if movie_blueprints or series_blueprints:
+                instructions: list[str] = []
+                if movie_blueprints:
+                    instructions.append(
+                        "Movie rows must follow these discovery lanes in order:\n"
+                        + "\n".join(_format_lane_lines(movie_blueprints, "movie"))
+                    )
+                if series_blueprints:
+                    instructions.append(
+                        "Series rows must follow these discovery lanes in order:\n"
+                        + "\n".join(_format_lane_lines(series_blueprints, "series"))
+                    )
+                instructions.append(
+                    "Use the provided lane IDs exactly for each catalog `id` (for example"
+                    " `aiopicks-movie-fresh-premieres`)."
+                )
+                catalog_instruction = "\n".join(instructions)
+            else:
+                catalog_instruction = (
+                    f"Generate {movie_target} movie catalogs AND {series_target} series catalogs."
+                )
+        elif movie_target > 0:
+            if movie_blueprints:
+                catalog_instruction = (
+                    "Movie rows must follow these discovery lanes in order:\n"
+                    + "\n".join(_format_lane_lines(movie_blueprints, "movie"))
+                    + "\nUse the provided lane IDs exactly for each catalog `id`."
+                )
+            else:
+                catalog_instruction = (
+                    f"Generate {movie_target} movie catalogs and skip series catalogs entirely."
+                )
+        elif series_target > 0:
+            if series_blueprints:
+                catalog_instruction = (
+                    "Series rows must follow these discovery lanes in order:\n"
+                    + "\n".join(_format_lane_lines(series_blueprints, "series"))
+                    + "\nUse the provided lane IDs exactly for each catalog `id`."
+                )
+            else:
+                catalog_instruction = (
+                    f"Generate {series_target} series catalogs and skip movie catalogs entirely."
+                )
+        else:
+            catalog_instruction = "Skip catalog generation; no rows are requested."
 
         prompt = USER_PROMPT_TEMPLATE.format(
             generated_at=summary.get("generated_at"),
@@ -129,17 +209,21 @@ class OpenRouterClient:
             recent_series=series_profile.get(
                 "recent_highlights", "No recent standouts captured."
             ),
-            catalog_count=catalog_count,
+            catalog_instruction=catalog_instruction,
             items_per_catalog=item_target,
             seed=seed,
         )
+
+        total_catalogs = max(movie_target, 0) + max(series_target, 0)
+        if total_catalogs <= 0:
+            total_catalogs = 1
 
         payload = {
             "model": resolved_model,
             "temperature": 0.7,
             "top_p": 0.8,
             "max_output_tokens": self._estimate_initial_token_budget(
-                catalog_count, item_target
+                total_catalogs, item_target
             ),
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -175,6 +259,14 @@ class OpenRouterClient:
             self._apply_exclusions(bundle, exclusion_map)
         if bundle.is_empty():
             raise RuntimeError("Model returned an empty catalog bundle")
+        if movie_target <= 0:
+            bundle.movie_catalogs = []
+        elif len(bundle.movie_catalogs) > movie_target:
+            bundle.movie_catalogs = bundle.movie_catalogs[:movie_target]
+        if series_target <= 0:
+            bundle.series_catalogs = []
+        elif len(bundle.series_catalogs) > series_target:
+            bundle.series_catalogs = bundle.series_catalogs[:series_target]
         await self._ensure_item_targets(
             summary,
             seed=seed,

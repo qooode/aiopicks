@@ -91,6 +91,42 @@ class Database:
             "trakt_history_snapshot",
             "ALTER TABLE profiles ADD COLUMN trakt_history_snapshot JSON",
         )
+        _ensure_column(
+            "enable_movie_catalogs",
+            "ALTER TABLE profiles ADD COLUMN enable_movie_catalogs BOOLEAN DEFAULT 1",
+            (
+                "UPDATE profiles SET enable_movie_catalogs = 1 "
+                "WHERE enable_movie_catalogs IS NULL"
+            ),
+        )
+        _ensure_column(
+            "enable_series_catalogs",
+            "ALTER TABLE profiles ADD COLUMN enable_series_catalogs BOOLEAN DEFAULT 1",
+            (
+                "UPDATE profiles SET enable_series_catalogs = 1 "
+                "WHERE enable_series_catalogs IS NULL"
+            ),
+        )
+        _ensure_column(
+            "catalog_rotation_mode",
+            "ALTER TABLE profiles ADD COLUMN catalog_rotation_mode VARCHAR(20) DEFAULT 'refresh'",
+            (
+                "UPDATE profiles SET catalog_rotation_mode = 'refresh' "
+                "WHERE catalog_rotation_mode IS NULL"
+            ),
+        )
+        _ensure_column(
+            "suggestion_cooldown_days",
+            "ALTER TABLE profiles ADD COLUMN suggestion_cooldown_days INTEGER DEFAULT 45",
+            (
+                "UPDATE profiles SET suggestion_cooldown_days = 45 "
+                "WHERE suggestion_cooldown_days IS NULL"
+            ),
+        )
+        _ensure_column(
+            "discovery_blueprints",
+            "ALTER TABLE profiles ADD COLUMN discovery_blueprints JSON",
+        )
 
     async def dispose(self) -> None:
         """Dispose of the underlying database engine."""

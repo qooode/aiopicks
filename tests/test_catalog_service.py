@@ -10,13 +10,88 @@ import httpx
 from app.config import Settings
 from app.database import Database
 from app.db_models import CatalogRecord, Profile
-from app.models import Catalog, CatalogItem
+from sqlalchemy import select
+from app.models import Catalog, CatalogBundle, CatalogItem
 from app.services.metadata_addon import MetadataAddonClient, MetadataMatch
 from app.services.catalog_generator import CatalogService
 from app.services.catalog_generator import ProfileState, ProfileStatus
 from app.services.openrouter import OpenRouterClient
-from app.services.trakt import TraktClient
+from app.services.trakt import HistoryBatch, TraktClient
 from app.services.catalog_generator import ManifestConfig
+
+
+class StubTraktClient:
+    async def fetch_history(
+        self,
+        content_type: str,
+        *,
+        client_id: str | None = None,
+        access_token: str | None = None,
+        limit: int | None = None,
+    ) -> HistoryBatch:
+        return HistoryBatch(items=[], total=0, fetched=False)
+
+    async def fetch_stats(
+        self,
+        *,
+        client_id: str | None = None,
+        access_token: str | None = None,
+    ) -> dict[str, object]:
+        return {}
+
+
+class StubMetadataClient:
+    default_base_url = None
+
+    async def lookup_many(self, *args, **kwargs):
+        return {}
+
+
+class StaticCatalogAI:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_catalogs(
+        self,
+        summary,
+        *,
+        seed,
+        api_key=None,
+        model=None,
+        exclusions=None,
+    ) -> CatalogBundle:
+        self.calls += 1
+        now = datetime.utcnow()
+        movie_catalogs = [
+            Catalog(
+                id="aiopicks-movie-temp-one",
+                type="movie",
+                title="Temp One",
+                description="Lane one",
+                seed=seed,
+                items=[CatalogItem(title="Sample A", type="movie")],
+                generated_at=now,
+            ),
+            Catalog(
+                id="aiopicks-movie-temp-two",
+                type="movie",
+                title="Temp Two",
+                description="Lane two",
+                seed=seed,
+                items=[CatalogItem(title="Sample B", type="movie")],
+                generated_at=now,
+            ),
+            Catalog(
+                id="aiopicks-movie-extra",
+                type="movie",
+                title="Extra",
+                description="Ignored",
+                seed=seed,
+                items=[CatalogItem(title="Sample C", type="movie")],
+                generated_at=now,
+            ),
+        ]
+        return CatalogBundle(movie_catalogs=movie_catalogs, series_catalogs=[])
 
 
 class RefreshingCatalogService(CatalogService):
@@ -148,6 +223,220 @@ def test_default_profile_skipped_without_api_key(tmp_path) -> None:
     asyncio.run(runner())
 
 
+def test_refresh_rotation_keeps_catalog_ids(tmp_path) -> None:
+    """Refresh rotation mode should keep catalog identifiers stable between runs."""
+
+    async def runner() -> None:
+        database_path = tmp_path / "rotation.db"
+        database = Database(f"sqlite+aiosqlite:///{database_path}")
+        await database.create_all()
+
+        settings = Settings(_env_file=None)
+        service = RefreshingCatalogService(settings, database.session_factory)
+        now = datetime.utcnow()
+
+        async with database.session_factory() as session:
+            profile = Profile(
+                id="rotation-user",
+                openrouter_api_key="key",
+                openrouter_model="model",
+                catalog_count=1,
+                catalog_item_count=1,
+                refresh_interval_seconds=3600,
+                response_cache_seconds=60,
+                enable_movie_catalogs=True,
+                enable_series_catalogs=False,
+                catalog_rotation_mode="refresh",
+                suggestion_cooldown_days=45,
+                next_refresh_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(profile)
+            await session.commit()
+
+        state = await service._load_profile_state("rotation-user")
+        assert state is not None
+        initial_catalog = Catalog(
+            id="aiopicks-movie-initial",
+            type="movie",
+            title="Initial Batch",
+            description="First wave",
+            seed="initial",
+            items=[CatalogItem(title="First Pick", type="movie", imdb_id="tt1000000")],
+            generated_at=datetime.utcnow(),
+        )
+        await service._store_catalogs(
+            state,
+            {"movie": {initial_catalog.id: initial_catalog}, "series": {}},
+        )
+
+        async with database.session_factory() as session:
+            stmt = select(CatalogRecord).where(CatalogRecord.profile_id == "rotation-user")
+            result = await session.execute(stmt)
+            first_record = result.scalar_one()
+            first_catalog_id = first_record.catalog_id
+            assert first_record.title == "Initial Batch"
+
+        refreshed_state = await service._load_profile_state("rotation-user")
+        refreshed_catalog = Catalog(
+            id="aiopicks-movie-refresh",
+            type="movie",
+            title="Refreshed Batch",
+            description="Second wave",
+            seed="refresh",
+            items=[CatalogItem(title="Second Pick", type="movie", imdb_id="tt2000000")],
+            generated_at=datetime.utcnow(),
+        )
+        await service._store_catalogs(
+            refreshed_state,
+            {"movie": {refreshed_catalog.id: refreshed_catalog}, "series": {}},
+        )
+
+        async with database.session_factory() as session:
+            stmt = select(CatalogRecord).where(CatalogRecord.profile_id == "rotation-user")
+            result = await session.execute(stmt)
+            refreshed_record = result.scalar_one()
+            assert refreshed_record.catalog_id == first_catalog_id
+            assert refreshed_record.title == "Refreshed Batch"
+
+    asyncio.run(runner())
+
+
+def test_blueprint_selection_limits_movie_catalogs(tmp_path) -> None:
+    """Only the selected discovery lanes should be stored and keep stable IDs."""
+
+    async def runner() -> None:
+        database_path = tmp_path / "blueprints.db"
+        database = Database(f"sqlite+aiosqlite:///{database_path}")
+        await database.create_all()
+
+        settings = Settings(_env_file=None)
+        trakt = StubTraktClient()
+        ai = StaticCatalogAI()
+        metadata = StubMetadataClient()
+        service = CatalogService(
+            settings,
+            trakt,
+            cast(OpenRouterClient, ai),
+            cast(MetadataAddonClient, metadata),
+            database.session_factory,
+        )
+
+        now = datetime.utcnow()
+        async with database.session_factory() as session:
+            profile = Profile(
+                id="lane-test",
+                openrouter_api_key="key",
+                openrouter_model="model",
+                catalog_count=5,
+                catalog_item_count=4,
+                enable_movie_catalogs=True,
+                enable_series_catalogs=False,
+                catalog_rotation_mode="refresh",
+                suggestion_cooldown_days=30,
+                refresh_interval_seconds=3600,
+                response_cache_seconds=60,
+                discovery_blueprints={
+                    "movie": ["fresh-premieres", "global-breakouts"],
+                    "series": [],
+                },
+                next_refresh_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(profile)
+            await session.commit()
+
+        state = await service._load_profile_state("lane-test")
+        assert state is not None
+        await service._refresh_catalogs(state)
+
+        async with database.session_factory() as session:
+            stmt = (
+                select(CatalogRecord)
+                .where(CatalogRecord.profile_id == "lane-test")
+                .order_by(CatalogRecord.position)
+            )
+            result = await session.execute(stmt)
+            records = result.scalars().all()
+
+        assert len(records) == 2
+        catalog_ids = [record.catalog_id.split("__", 1)[1] for record in records]
+        assert catalog_ids == [
+            "aiopicks-movie-fresh-premieres",
+            "aiopicks-movie-global-breakouts",
+        ]
+
+        await database.dispose()
+
+    asyncio.run(runner())
+
+
+def test_recent_recommendations_excluded(tmp_path) -> None:
+    """Recently recommended titles should be excluded from new AI prompts."""
+
+    async def runner() -> None:
+        database_path = tmp_path / "recommendations.db"
+        database = Database(f"sqlite+aiosqlite:///{database_path}")
+        await database.create_all()
+
+        settings = Settings(_env_file=None)
+        service = RefreshingCatalogService(settings, database.session_factory)
+        now = datetime.utcnow()
+
+        async with database.session_factory() as session:
+            profile = Profile(
+                id="exclusions-user",
+                openrouter_api_key="key",
+                openrouter_model="model",
+                catalog_count=1,
+                catalog_item_count=1,
+                refresh_interval_seconds=3600,
+                response_cache_seconds=60,
+                enable_movie_catalogs=True,
+                enable_series_catalogs=False,
+                catalog_rotation_mode="refresh",
+                suggestion_cooldown_days=60,
+                next_refresh_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(profile)
+            await session.commit()
+
+        state = await service._load_profile_state("exclusions-user")
+        assert state is not None
+        catalog = Catalog(
+            id="aiopicks-movie-exclusions",
+            type="movie",
+            title="Discovery",
+            description="Fresh picks",
+            seed="exclusions",
+            items=[CatalogItem(title="Hidden Gem", type="movie", imdb_id="tt3141592")],
+            generated_at=datetime.utcnow(),
+        )
+        await service._store_catalogs(
+            state,
+            {"movie": {catalog.id: catalog}, "series": {}},
+        )
+
+        exclusions = await service._load_recent_recommendation_exclusions(state)
+        assert "movie" in exclusions
+        movie_exclusions = exclusions["movie"]
+        assert "fingerprints" in movie_exclusions
+        assert any(
+            fingerprint.endswith("tt3141592")
+            for fingerprint in movie_exclusions["fingerprints"]
+        )
+        assert "recent_titles" in movie_exclusions
+        assert "Hidden Gem" in movie_exclusions["recent_titles"]
+
+        await database.dispose()
+
+    asyncio.run(runner())
+
+
 def test_manifest_waits_for_refresh(tmp_path) -> None:
     """Manifest requests should wait for catalog regeneration when stale."""
 
@@ -166,7 +455,7 @@ def test_manifest_waits_for_refresh(tmp_path) -> None:
 
         assert state.id == profile_id
         assert service.refresh_calls == 1
-        scoped_id = service._scoped_catalog_id(profile_id, service.new_base_id)
+        scoped_id = service._scoped_catalog_id(profile_id, "aiopicks-movie-old")
         assert [entry["id"] for entry in manifest_entries] == [scoped_id]
         assert [entry["name"] for entry in manifest_entries] == [service.new_title]
 
@@ -192,8 +481,8 @@ def test_catalog_payload_available_after_refresh(tmp_path) -> None:
         await _seed_stale_profile(service, database, profile_id)
 
         config = ManifestConfig.model_validate({"profile": profile_id})
-        new_catalog_id = service._scoped_catalog_id(profile_id, service.new_base_id)
-        payload = await service.get_catalog_payload(config, "movie", new_catalog_id)
+        existing_catalog_id = service._scoped_catalog_id(profile_id, "aiopicks-movie-old")
+        payload = await service.get_catalog_payload(config, "movie", existing_catalog_id)
 
         assert service.refresh_calls == 1
         assert payload["catalogName"] == service.new_title

@@ -23,6 +23,7 @@ from .services.catalog_generator import ManifestConfig
 from .services.openrouter import OpenRouterClient
 from .services.trakt import TraktClient
 from .web import render_config_page
+from .discovery import sanitize_blueprint_selection
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -314,6 +315,12 @@ def register_routes(fastapi_app: FastAPI) -> None:
                     cfg.trakt_client_id,
                     cfg.trakt_access_token,
                     cfg.metadata_addon_url,
+                    cfg.movies_enabled,
+                    cfg.series_enabled,
+                    cfg.rotation_mode,
+                    cfg.suggestion_cooldown_days,
+                    cfg.movie_blueprints,
+                    cfg.series_blueprints,
                 )
             )
 
@@ -374,6 +381,42 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 metadata_url = str(config.metadata_addon_url)
                 if (state.metadata_addon_url or None) != metadata_url:
                     return True
+            if (
+                config.movies_enabled is not None
+                and state.enable_movie_catalogs != config.movies_enabled
+            ):
+                return True
+            if (
+                config.series_enabled is not None
+                and state.enable_series_catalogs != config.series_enabled
+            ):
+                return True
+            if (
+                config.rotation_mode is not None
+                and state.rotation_mode != config.rotation_mode
+            ):
+                return True
+            if (
+                config.suggestion_cooldown_days is not None
+                and state.suggestion_cooldown_days != config.suggestion_cooldown_days
+            ):
+                return True
+            if (
+                config.movie_blueprints is not None
+                and state.movie_blueprints
+                != sanitize_blueprint_selection(
+                    config.movie_blueprints, "movie"
+                )
+            ):
+                return True
+            if (
+                config.series_blueprints is not None
+                and state.series_blueprints
+                != sanitize_blueprint_selection(
+                    config.series_blueprints, "series"
+                )
+            ):
+                return True
             return False
 
         if _requires_resolution(status):
