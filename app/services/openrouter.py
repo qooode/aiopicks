@@ -75,6 +75,7 @@ class OpenRouterClient:
         api_key: str | None = None,
         model: str | None = None,
         exclusions: dict[str, dict[str, Any]] | None = None,
+        retry_limit: int | None = None,
     ) -> CatalogBundle:
         """Generate new catalogs using the configured model."""
 
@@ -87,6 +88,14 @@ class OpenRouterClient:
             raise RuntimeError("OpenRouter API key is required to generate catalogs")
 
         exclusion_map = self._normalise_exclusions(exclusions)
+        if retry_limit is None:
+            resolved_retry_limit = self._settings.generation_retry_limit
+        else:
+            try:
+                resolved_retry_limit = int(retry_limit)
+            except (TypeError, ValueError):
+                resolved_retry_limit = self._settings.generation_retry_limit
+        resolved_retry_limit = max(0, min(resolved_retry_limit, 10))
         tasks = [
             asyncio.create_task(
                 self._generate_catalog_for_definition(
@@ -137,6 +146,7 @@ class OpenRouterClient:
             api_key=resolved_key,
             model=resolved_model,
             exclusions=exclusion_map,
+            max_attempts=resolved_retry_limit,
         )
         return bundle
 
@@ -303,6 +313,7 @@ class OpenRouterClient:
         api_key: str,
         model: str,
         exclusions: dict[str, dict[str, Any]] | None = None,
+        max_attempts: int = 3,
     ) -> None:
         """Ensure every catalog reaches the configured item target."""
 
@@ -314,7 +325,10 @@ class OpenRouterClient:
                 item_limit,
                 exclusions=content_exclusions,
             )
-            while requests and attempts < 3:
+            attempt_limit = max(0, max_attempts)
+            if attempt_limit <= 0:
+                return
+            while requests and attempts < attempt_limit:
                 additions = await self._top_up_catalogs(
                     summary,
                     seed=seed,

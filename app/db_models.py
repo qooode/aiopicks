@@ -34,6 +34,7 @@ class Profile(Base):
     )
     catalog_count: Mapped[int] = mapped_column(Integer, default=STABLE_CATALOG_COUNT)
     catalog_item_count: Mapped[int] = mapped_column(Integer, default=8)
+    generation_retry_limit: Mapped[int] = mapped_column(Integer, default=3)
     refresh_interval_seconds: Mapped[int] = mapped_column(Integer, default=43_200)
     response_cache_seconds: Mapped[int] = mapped_column(Integer, default=1_800)
     metadata_addon_url: Mapped[str | None] = mapped_column(String(512), nullable=True)

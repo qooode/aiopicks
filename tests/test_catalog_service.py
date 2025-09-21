@@ -218,6 +218,7 @@ def test_profile_status_payload_flags() -> None:
         trakt_client_id=None,
         trakt_access_token=None,
         catalog_item_count=12,
+        generation_retry_limit=3,
         refresh_interval_seconds=3600,
         response_cache_seconds=600,
         trakt_history_limit=1_000,
