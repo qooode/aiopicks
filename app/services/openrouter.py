@@ -45,6 +45,20 @@ Rules:
 4. Keep every description to one crisp sentence (about 16 words) explaining why it fits the lane.
 5. Provide real release years and stay grounded in genuine productions.
 6. Set "type" to "{content_type}" for every item.
+7. Elevate top-tier, critically respected or audience-beloved standouts that still feel new to this viewer—never autopilot picks.
+
+Ultra-strict theme matching checklist:
+1. The central plot must be 100% about the lane intent—no subplots, metaphors, or single-scene matches.
+2. Only include titles where every viewer would instantly agree they are EXACTLY about the stated focus.
+3. The theme must drive the entire story from start to finish (for weddings, there must be an actual wedding at the core; for professions, the leads must hold that job).
+4. Reject any candidate if you need to justify the connection or if it drifts from the core theme.
+5. Use official IMDb/TMDB titles with complete metadata and broad availability—mainstream, easily streamable releases only.
+
+Verification protocol inside this response:
+1. For each candidate, ask: "Would 100 out of 100 people agree this is about '{title}'?" If the answer is below 100%, discard it.
+2. Triple-check canonical plot summaries to ensure a perfect thematic match before including it.
+3. Provide concrete, specific reasons in the description that prove the storyline fulfills the lane intent.
+4. Never sacrifice relevance for variety—if unsure, exclude the title and pick another that still feels like a discovery for the user.
 
 Respond strictly with JSON following this structure:
 {{
@@ -467,6 +481,18 @@ class OpenRouterClient:
                 )
             )
 
+        prompt_lines.append(
+            "Apply the ultra-strict theme checklist for every catalog: only include mainstream titles whose entire plots stay on the stated intent."
+        )
+        prompt_lines.append(
+            "Prioritise acclaimed, best-in-class matches that still feel fresh to this viewer—never default to autopilot picks."
+        )
+        prompt_lines.append(
+            "For each candidate ask yourself if 100 of 100 viewers would agree it exactly matches that intent; discard anything that fails."
+        )
+        prompt_lines.append(
+            "Cross-check canonical IMDb/TMDB summaries mentally and ensure each 16-word note explicitly proves the theme alignment."
+        )
         prompt_lines.append(
             "Respond with JSON where each key is a catalog ID and the value is an "
             "array of the missing items."
