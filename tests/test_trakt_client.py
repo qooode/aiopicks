@@ -103,3 +103,27 @@ async def test_fetch_history_handles_error_response() -> None:
     assert batch.fetched is False
     assert batch.items == []
     assert batch.total == 0
+
+
+@pytest.mark.anyio("asyncio")
+async def test_fetch_history_marks_empty_result_as_fetched() -> None:
+    """Empty history responses should be treated as successful fetches."""
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[],
+            headers={
+                "x-pagination-item-count": "0",
+                "x-pagination-page-count": "1",
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport, base_url="https://api.example.com") as http_client:
+        client = TraktClient(build_settings(), http_client)
+        batch = await client.fetch_history("movies", limit=50)
+
+    assert batch.fetched is True
+    assert batch.items == []
+    assert batch.total == 0
