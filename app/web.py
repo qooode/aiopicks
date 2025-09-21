@@ -340,10 +340,6 @@ CONFIG_TEMPLATE = dedent(
                     <input id="config-metadata-addon" type="text" placeholder="https://example-addon.strem.fun" inputmode="url" spellcheck="false" />
                 </div>
                 <div class="field">
-                    <label for="config-catalog-count">Catalog rows <span class="range-value" id="catalog-count-value"></span></label>
-                    <input id="config-catalog-count" type="range" min="1" max="12" step="1" />
-                </div>
-                <div class="field">
                     <label for="config-catalog-items">Items per catalog <span class="range-value" id="catalog-items-value"></span></label>
                     <input id="config-catalog-items" type="range" min="4" max="100" step="1" />
                 </div>
@@ -391,8 +387,6 @@ CONFIG_TEMPLATE = dedent(
             const openrouterKey = document.getElementById('config-openrouter-key');
             const openrouterModel = document.getElementById('config-openrouter-model');
             const metadataAddonInput = document.getElementById('config-metadata-addon');
-            const catalogSlider = document.getElementById('config-catalog-count');
-            const catalogValue = document.getElementById('catalog-count-value');
             const catalogItemsSlider = document.getElementById('config-catalog-items');
             const catalogItemsValue = document.getElementById('catalog-items-value');
             const historySlider = document.getElementById('config-history-limit');
@@ -512,8 +506,6 @@ CONFIG_TEMPLATE = dedent(
 
             openrouterModel.value = defaults.openrouterModel || '';
             metadataAddonInput.value = defaults.metadataAddon || '';
-            catalogSlider.value = defaults.catalogCount || catalogSlider.min || 1;
-            catalogValue.textContent = catalogSlider.value;
             const defaultCatalogItems = defaults.catalogItemCount || catalogItemsSlider.min || 4;
             catalogItemsSlider.value = defaultCatalogItems;
             catalogItemsValue.textContent = catalogItemsSlider.value;
@@ -545,11 +537,6 @@ CONFIG_TEMPLATE = dedent(
                 }
             });
 
-            catalogSlider.addEventListener('input', () => {
-                catalogValue.textContent = catalogSlider.value;
-                markProfileDirty();
-                updateManifestPreview();
-            });
             catalogItemsSlider.addEventListener('input', () => {
                 catalogItemsValue.textContent = catalogItemsSlider.value;
                 markProfileDirty();
@@ -957,7 +944,6 @@ CONFIG_TEMPLATE = dedent(
                     openrouterKey: openrouterKey.value.trim(),
                     openrouterModel: openrouterModel.value.trim(),
                     metadataAddon: metadataAddonInput.value.trim(),
-                    catalogCount: catalogSlider.value,
                     catalogItems: catalogItemsSlider.value,
                     traktHistoryLimit: historySlider.value,
                     refreshInterval: refreshSelect.value,
@@ -978,7 +964,6 @@ CONFIG_TEMPLATE = dedent(
                 }
                 if (settings.openrouterKey) payload.openrouterKey = settings.openrouterKey;
                 if (settings.openrouterModel) payload.openrouterModel = settings.openrouterModel;
-                if (settings.catalogCount) payload.catalogCount = Number(settings.catalogCount);
                 if (settings.catalogItems) payload.catalogItems = Number(settings.catalogItems);
                 if (settings.traktHistoryLimit) {
                     payload.traktHistoryLimit = Number(settings.traktHistoryLimit);
@@ -1110,7 +1095,6 @@ CONFIG_TEMPLATE = dedent(
                     'openrouterKey',
                     'openrouterModel',
                     'metadataAddon',
-                    'catalogCount',
                     'catalogItems',
                     'traktHistoryLimit',
                     'refreshInterval',
@@ -1456,7 +1440,6 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
         "appName": settings.app_name,
         "manifestName": settings.app_name,
         "openrouterModel": settings.openrouter_model,
-        "catalogCount": settings.catalog_count,
         "catalogItemCount": settings.catalog_item_count,
         "traktHistoryLimit": settings.trakt_history_limit,
         "refreshIntervalSeconds": settings.refresh_interval_seconds,

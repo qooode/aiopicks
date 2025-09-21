@@ -8,6 +8,8 @@ from typing import Literal
 from pydantic import AliasChoices, Field, HttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .stable_catalogs import STABLE_CATALOG_COUNT
+
 
 class Settings(BaseSettings):
     """Settings loaded from environment variables or a .env file."""
@@ -35,7 +37,12 @@ class Settings(BaseSettings):
         default="google/gemini-2.5-flash-lite", alias="OPENROUTER_MODEL"
     )
 
-    catalog_count: int = Field(default=6, alias="CATALOG_COUNT", ge=1, le=12)
+    catalog_count: int = Field(
+        default=STABLE_CATALOG_COUNT,
+        alias="CATALOG_COUNT",
+        ge=STABLE_CATALOG_COUNT,
+        le=STABLE_CATALOG_COUNT,
+    )
     catalog_item_count: int = Field(
         default=8, alias="CATALOG_ITEM_COUNT", ge=1, le=100
     )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -11,6 +12,7 @@ from pydantic import ValidationError
 
 from ..config import Settings
 from ..models import Catalog, CatalogBundle, CatalogItem
+from ..stable_catalogs import STABLE_CATALOGS, StableCatalogDefinition
 from ..utils import extract_json_object, slugify
 
 logger = logging.getLogger(__name__)
@@ -21,7 +23,7 @@ SYSTEM_PROMPT = (
     "the documented schema and never include commentary outside JSON."
 )
 
-USER_PROMPT_TEMPLATE = """
+CATALOG_REQUEST_TEMPLATE = """
 You are the trusted cinephile friend helping a power user discover new titles based on their Trakt history.
 
 Trakt insight snapshot (generated at {generated_at} UTC):
@@ -31,50 +33,28 @@ Trakt insight snapshot (generated at {generated_at} UTC):
 - Series taste signals: {series_taste_summary}
 - Recent series standouts (avoid repeats unless a sequel/continuation is vital): {recent_series}
 
-Instructions:
-1. Generate {catalog_count} movie catalogs AND {catalog_count} series catalogs.
-2. Use the random seed `{seed}` to add gentle variety—shuffle sequencing or spotlight nearby corners of their taste without forcing jarring leaps.
-3. Each catalog must include EXACTLY {items_per_catalog} strong picks with real titles and release years.
-4. Keep each description to a single crisp sentence (max ~16 words) to conserve tokens, even when {items_per_catalog} is large.
-5. Title each catalog like a thoughtful recommendation from a cinephile friend; nod to the viewer’s signature loves only when it genuinely strengthens the hook and gently spotlight why the set feels made for them.
-6. Keep every catalog anchored to a clearly defined micro-theme—call out a precise mood, locale, era, subgenre twist, or craft focus (for example "Seoul neon revenge thrillers" instead of "Korean cinema's dark side").
-7. Apply the following title craftsmanship rules to every catalog:
-   - Create a specific, eye-catching theme in 4–8 words using simple, everyday language that anyone can understand, keeping the angle clear yet not overly narrow.
-   - Make titles vivid, unique, and conversational—mix short punchy phrasing with more descriptive flows without sounding promotional.
-   - Use natural sentence case: capitalize only the first word and proper nouns, keep everything else lower-case, and never use periods.
-   - Avoid complex or pretentious vocabulary, childish phrasing, or generic angles like "interesting movies"; aim for hooks adults would trade with friends.
-   - Use everyday connectors—articles, prepositions, and casual turns of phrase—to keep the language flowing like real conversation.
-   - Limit commas so that at most one in five titles includes one, never end a title with a comma, and keep titles free of periods.
-   - Vary opening words across the set, ensure fewer than one in five titles starts with "when" or "what", and steer clear of repeating patterns such as "X who Y" or "X with Y" back-to-back.
-   - Keep grammar clean, flow natural, and avoid overusing pronouns like "their", "them", or "why"; make the titles feel like recommendations a friend would share.
-8. Keep titles confident and conversational, steer clear of marketing fluff, and never open with "Your" or another possessive pronoun.
-9. Ground every catalog in a clear, taste-aligned theme that a real fan would recognize, avoiding contrived genre mash-ups or whiplash pivots, and spell out the specific lens connecting the picks.
-10. Let each description briefly explain why the picks belong together, highlighting the niche angle (era, region, creative movement, tonal mix, or craft focus) that makes the set feel handpicked, and speak directly to them with a warm second-person voice that references the provided taste signals when helpful.
-11. Treat the viewer's history as inspiration, not a shopping list—lean on the taste signals above and avoid repeating the recent standout titles unless a sequel or continuation is essential.
-12. Lean into discovery: ensure at least 60% of every catalog consists of fresh-to-viewer surprises rather than comfort rewatches.
-13. For each item include only its real title, type, release year, and a concise description. Do not invent IDs, posters, or runtimes—the server enriches entries with the configured metadata add-on (for example, Cinemeta).
-14. Blend beloved flavours with adventurous outliers aligned to their favourite genres, languages, and decades; favour acclaimed deep cuts, international gems, or under-streamed entries that still feel on-brand.
+This request focuses on the "{title}" lane:
+- Intent: {description}
+- Content type: {content_label}
+- Random seed: {seed}
 
-Respond with JSON using this structure:
+Rules:
+1. Recommend EXACTLY {item_target} {content_label_plural} that match the lane intent and feel fresh to the viewer.
+2. Only include titles with an IMDb rating of 7.0 or higher.
+3. Skip anything already logged or completed. Known fingerprints to dodge: {avoid_list}
+4. Keep every description to one crisp sentence (about 16 words) explaining why it fits the lane.
+5. Provide real release years and stay grounded in genuine productions.
+6. Set "type" to "{content_type}" for every item.
+
+Respond strictly with JSON following this structure:
 {{
-  "movie_catalogs": [
+  "items": [
     {{
-      "id": "string",
-      "title": "string",
-      "description": "string",
-      "seed": "{seed}",
-      "items": [
-        {{
-          "name": "Movie title",
-          "type": "movie",
-          "year": 2024,
-          "description": "short synopsis"
-        }}
-      ]
+      "title": "Title",
+      "type": "{content_type}",
+      "year": 2024,
+      "description": "short sentence"
     }}
-  ],
-  "series_catalogs": [
-    {{ ... same fields but type "series" ... }}
   ]
 }}
 """
@@ -98,79 +78,53 @@ class OpenRouterClient:
     ) -> CatalogBundle:
         """Generate new catalogs using the configured model."""
 
-        catalog_count = summary.get("catalog_count", self._settings.catalog_count)
         item_target = summary.get(
             "catalog_item_count", self._settings.catalog_item_count
         )
-        profile = summary.get("profile", {})
-
         resolved_model = model or self._settings.openrouter_model
         resolved_key = api_key or self._settings.openrouter_api_key
         if not resolved_key:
             raise RuntimeError("OpenRouter API key is required to generate catalogs")
 
-        movie_profile = profile.get("movies", {})
-        series_profile = profile.get("series", {})
+        exclusion_map = self._normalise_exclusions(exclusions)
+        tasks = [
+            asyncio.create_task(
+                self._generate_catalog_for_definition(
+                    summary,
+                    definition,
+                    item_target=item_target,
+                    seed=f"{seed}-{index:02d}",
+                    api_key=resolved_key,
+                    model=resolved_model,
+                    exclusions=(exclusion_map or {}).get(definition.content_type),
+                )
+            )
+            for index, definition in enumerate(STABLE_CATALOGS)
+        ]
 
-        prompt = USER_PROMPT_TEMPLATE.format(
-            generated_at=summary.get("generated_at"),
-            lifetime_summary=summary.get(
-                "lifetime_summary", "Lifetime stats unavailable."
-            ),
-            movie_taste_summary=movie_profile.get(
-                "taste_summary", "No strong movie signals captured yet."
-            ),
-            series_taste_summary=series_profile.get(
-                "taste_summary", "No strong series signals captured yet."
-            ),
-            recent_movies=movie_profile.get(
-                "recent_highlights", "No recent standouts captured."
-            ),
-            recent_series=series_profile.get(
-                "recent_highlights", "No recent standouts captured."
-            ),
-            catalog_count=catalog_count,
-            items_per_catalog=item_target,
-            seed=seed,
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        movie_catalogs: list[Catalog] = []
+        series_catalogs: list[Catalog] = []
+
+        for definition, result in zip(STABLE_CATALOGS, results):
+            if isinstance(result, Exception):
+                logger.warning(
+                    "Catalog generation failed for %s lane: %s",
+                    definition.key,
+                    result,
+                )
+                continue
+            if result is None:
+                continue
+            if definition.content_type == "movie":
+                movie_catalogs.append(result)
+            else:
+                series_catalogs.append(result)
+
+        bundle = CatalogBundle(
+            movie_catalogs=movie_catalogs, series_catalogs=series_catalogs
         )
 
-        payload = {
-            "model": resolved_model,
-            "temperature": 0.7,
-            "top_p": 0.8,
-            "max_output_tokens": self._estimate_initial_token_budget(
-                catalog_count, item_target
-            ),
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-        }
-
-        headers = {
-            "Authorization": f"Bearer {resolved_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/aiopicks/aiopicks",
-            "X-Title": "AIOPicks Python",
-        }
-
-        response = await self._client.post("/chat/completions", json=payload, headers=headers)
-        if response.status_code >= 400:
-            logger.error("OpenRouter request failed: %s", response.text)
-            raise RuntimeError("OpenRouter request failed")
-
-        data = response.json()
-        choices = data.get("choices", [])
-        if not choices:
-            raise RuntimeError("Model returned no choices")
-        message = choices[0].get("message", {})
-        content = message.get("content")
-        if not isinstance(content, str):
-            raise RuntimeError("Model response missing content")
-
-        parsed = extract_json_object(content)
-        exclusion_map = self._normalise_exclusions(exclusions)
-        bundle = CatalogBundle.from_ai_response(parsed, seed=seed)
         if exclusion_map:
             self._apply_exclusions(bundle, exclusion_map)
         if bundle.is_empty():
@@ -186,22 +140,148 @@ class OpenRouterClient:
         )
         return bundle
 
-    def _estimate_initial_token_budget(
-        self, catalog_count: int, item_target: int
-    ) -> int:
-        """Estimate a generous token budget for the primary catalog request."""
+    async def _generate_catalog_for_definition(
+        self,
+        summary: dict[str, Any],
+        definition: StableCatalogDefinition,
+        *,
+        item_target: int,
+        seed: str,
+        api_key: str,
+        model: str,
+        exclusions: dict[str, Any] | None = None,
+    ) -> Catalog | None:
+        """Request catalog items for a single stable lane."""
 
-        try:
-            catalogs = max(int(catalog_count), 1)
-        except (TypeError, ValueError):
-            catalogs = 1
+        prompt = self._build_definition_prompt(
+            summary,
+            definition=definition,
+            item_target=item_target,
+            seed=seed,
+            exclusions=exclusions,
+        )
+
+        payload = {
+            "model": model,
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "max_output_tokens": self._estimate_definition_token_budget(item_target),
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        }
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/aiopicks/aiopicks",
+            "X-Title": "AIOPicks Python",
+        }
+
+        response = await self._client.post("/chat/completions", json=payload, headers=headers)
+        if response.status_code >= 400:
+            raise RuntimeError(response.text)
+
+        data = response.json()
+        choices = data.get("choices", [])
+        if not choices:
+            raise RuntimeError("Model returned no choices")
+        message = choices[0].get("message", {})
+        content = message.get("content")
+        if not isinstance(content, str):
+            raise RuntimeError("Model response missing content")
+
+        parsed = extract_json_object(content)
+        raw_items: list[dict[str, Any]] = []
+        if isinstance(parsed, dict):
+            candidate = parsed.get("items")
+            if isinstance(candidate, list):
+                raw_items = [entry for entry in candidate if isinstance(entry, dict)]
+        elif isinstance(parsed, list):
+            raw_items = [entry for entry in parsed if isinstance(entry, dict)]
+
+        items: list[CatalogItem] = []
+        for entry in raw_items:
+            payload = {**entry, "type": definition.content_type}
+            try:
+                item = CatalogItem.model_validate(payload)
+            except ValidationError:
+                continue
+            items.append(item)
+
+        return Catalog(
+            id=f"aiopicks-{definition.content_type}-{definition.key}",
+            type=definition.content_type,
+            title=definition.title,
+            description=definition.description,
+            seed=seed,
+            items=items,
+            generated_at=datetime.utcnow(),
+        )
+
+    def _build_definition_prompt(
+        self,
+        summary: dict[str, Any],
+        *,
+        definition: StableCatalogDefinition,
+        item_target: int,
+        seed: str,
+        exclusions: dict[str, Any] | None = None,
+    ) -> str:
+        profile = summary.get("profile", {}) or {}
+        movie_profile = profile.get("movies", {}) or {}
+        series_profile = profile.get("series", {}) or {}
+
+        content_label = "movie" if definition.content_type == "movie" else "series"
+        content_label_plural = "movies" if content_label == "movie" else "series"
+
+        avoid_titles = [
+            title
+            for title in (exclusions or {}).get("titles", [])
+            if isinstance(title, str) and title.strip()
+        ]
+        if avoid_titles:
+            avoid_list = ", ".join(avoid_titles[:16])
+        else:
+            avoid_list = "none supplied—use the history context to stay fresh."
+
+        return CATALOG_REQUEST_TEMPLATE.format(
+            generated_at=summary.get("generated_at", datetime.utcnow().isoformat()),
+            lifetime_summary=summary.get(
+                "lifetime_summary", "Lifetime stats unavailable."
+            ),
+            movie_taste_summary=movie_profile.get(
+                "taste_summary", "No strong movie signals captured yet."
+            ),
+            series_taste_summary=series_profile.get(
+                "taste_summary", "No strong series signals captured yet."
+            ),
+            recent_movies=movie_profile.get(
+                "recent_highlights", "No recent standouts captured."
+            ),
+            recent_series=series_profile.get(
+                "recent_highlights", "No recent standouts captured."
+            ),
+            title=definition.title,
+            description=definition.description,
+            content_label=content_label,
+            content_label_plural=content_label_plural,
+            content_type=definition.content_type,
+            item_target=item_target,
+            seed=seed,
+            avoid_list=avoid_list,
+        )
+
+    def _estimate_definition_token_budget(self, item_target: int) -> int:
+        """Estimate a token budget for a single catalog lane."""
+
         try:
             items = max(int(item_target), 1)
         except (TypeError, ValueError):
             items = 1
-        total_items = catalogs * items * 2  # movie + series catalogs
-        estimated = 900 + total_items * 18
-        return max(2_500, min(48_000, estimated))
+        estimated = 900 + items * 20
+        return max(2_000, min(12_000, estimated))
 
     def _estimate_top_up_token_budget(self, total_missing: int) -> int:
         """Estimate token budget for targeted top-up prompts."""

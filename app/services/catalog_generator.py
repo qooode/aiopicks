@@ -54,12 +54,6 @@ class ManifestConfig(BaseModel):
         max_length=120,
         validation_alias=AliasChoices("manifestName", "addonName"),
     )
-    catalog_count: int | None = Field(
-        default=None,
-        ge=1,
-        le=12,
-        validation_alias=AliasChoices("catalogCount", "count"),
-    )
     catalog_item_count: int | None = Field(
         default=None,
         ge=1,
@@ -115,7 +109,6 @@ class ManifestConfig(BaseModel):
         return cls.model_validate(payload)
 
     @field_validator(
-        "catalog_count",
         "catalog_item_count",
         "refresh_interval",
         "response_cache",
@@ -162,7 +155,6 @@ class ProfileState:
     openrouter_model: str
     trakt_client_id: str | None
     trakt_access_token: str | None
-    catalog_count: int
     catalog_item_count: int
     refresh_interval_seconds: int
     response_cache_seconds: int
@@ -205,7 +197,6 @@ class ProfileStatus:
         return {
             "profileId": self.state.id,
             "openrouterModel": self.state.openrouter_model,
-            "catalogCount": self.state.catalog_count,
             "catalogItemCount": self.state.catalog_item_count,
             "refreshIntervalSeconds": self.state.refresh_interval_seconds,
             "responseCacheSeconds": self.state.response_cache_seconds,
@@ -480,7 +471,6 @@ class CatalogService:
             movie_history,
             show_history,
             state=state,
-            catalog_count=state.catalog_count,
             catalog_item_count=state.catalog_item_count,
         )
         seed = secrets.token_hex(4)
@@ -596,7 +586,6 @@ class CatalogService:
             openrouter_model=profile.openrouter_model,
             trakt_client_id=profile.trakt_client_id,
             trakt_access_token=profile.trakt_access_token,
-            catalog_count=profile.catalog_count,
             catalog_item_count=getattr(
                 profile, "catalog_item_count", self._settings.catalog_item_count
             ),
@@ -980,7 +969,7 @@ class CatalogService:
                     display_name=identity.display_name,
                     openrouter_api_key=openrouter_key,
                     openrouter_model=config.openrouter_model or self._settings.openrouter_model,
-                    catalog_count=config.catalog_count or self._settings.catalog_count,
+                    catalog_count=self._settings.catalog_count,
                     catalog_item_count=(
                         config.catalog_item_count
                         or self._settings.catalog_item_count
@@ -1014,9 +1003,6 @@ class CatalogService:
                     refresh_required = True
                 if config.openrouter_model and config.openrouter_model != profile.openrouter_model:
                     profile.openrouter_model = config.openrouter_model
-                    refresh_required = True
-                if config.catalog_count and config.catalog_count != profile.catalog_count:
-                    profile.catalog_count = config.catalog_count
                     refresh_required = True
                 if (
                     config.catalog_item_count
@@ -1328,7 +1314,6 @@ class CatalogService:
         show_history: list[dict[str, Any]],
         *,
         state: ProfileState,
-        catalog_count: int,
         catalog_item_count: int,
     ) -> dict[str, Any]:
         movie_profile = TraktClient.summarize_history(movie_history, key="movie")
@@ -1349,7 +1334,6 @@ class CatalogService:
 
         summary: dict[str, Any] = {
             "generated_at": datetime.utcnow().isoformat(),
-            "catalog_count": catalog_count,
             "catalog_item_count": catalog_item_count,
             "profile": {
                 "movies": movie_profile,
