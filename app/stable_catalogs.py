@@ -132,3 +132,4 @@ STABLE_CATALOGS: tuple[StableCatalogDefinition, ...] = (
 
 
 STABLE_CATALOG_COUNT = len(STABLE_CATALOGS)
+STABLE_CATALOG_KEYS = tuple(definition.key for definition in STABLE_CATALOGS)

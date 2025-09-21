@@ -81,6 +81,7 @@ async def _seed_stale_profile(
             openrouter_api_key="test-key",
             openrouter_model="test-model",
             catalog_count=1,
+            catalog_keys=["for-you-movies"],
             catalog_item_count=1,
             refresh_interval_seconds=3600,
             response_cache_seconds=60,
@@ -149,6 +150,43 @@ def test_default_profile_skipped_without_api_key(tmp_path) -> None:
         state = await service._load_profile_state("default")
 
         assert state is None
+
+        await database.dispose()
+
+    asyncio.run(runner())
+
+
+def test_profile_catalog_selection_persists(tmp_path) -> None:
+    """Catalog key overrides should persist on the stored profile."""
+
+    async def runner() -> None:
+        database_path = tmp_path / "selection.db"
+        database = Database(f"sqlite+aiosqlite:///{database_path}")
+        await database.create_all()
+
+        settings = Settings(_env_file=None, OPENROUTER_API_KEY="test-key")
+        service = CatalogService(
+            settings,
+            cast(TraktClient, object()),
+            cast(OpenRouterClient, object()),
+            cast(MetadataAddonClient, object()),
+            database.session_factory,
+        )
+
+        config = ManifestConfig.model_validate(
+            {
+                "profile": "selection-user",
+                "catalogs": ["hidden-gems", "docs-youll-like"],
+            }
+        )
+        context = await service.resolve_profile(config)
+        assert context.state.catalog_keys == ("hidden-gems", "docs-youll-like")
+
+        async with database.session_factory() as session:
+            stored = await session.get(Profile, "selection-user")
+            assert stored is not None
+            assert stored.catalog_keys == ["hidden-gems", "docs-youll-like"]
+            assert stored.catalog_count == 2
 
         await database.dispose()
 
@@ -327,6 +365,7 @@ def test_profile_status_payload_flags() -> None:
     assert payload["hasCatalogs"] is True
     assert payload["refreshing"] is False
     assert payload["combineForYou"] is False
+    assert payload["catalogKeys"] == []
 
     refreshing_status = ProfileStatus(
         state=base_state,
@@ -337,6 +376,7 @@ def test_profile_status_payload_flags() -> None:
     refreshing_payload = refreshing_status.to_payload()
     assert refreshing_payload["ready"] is False
     assert refreshing_payload["needsRefresh"] is True
+    assert refreshing_payload["catalogKeys"] == []
 
 
 def test_trakt_snapshot_normalisation() -> None:
@@ -539,6 +579,7 @@ def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:
             openrouter_api_key="key",
             openrouter_model="model",
             catalog_count=1,
+            catalog_keys=["for-you-movies"],
             catalog_item_count=8,
             refresh_interval_seconds=3600,
             response_cache_seconds=3600,

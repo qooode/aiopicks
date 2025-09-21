@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Sequence
 
 import httpx
 from pydantic import ValidationError
@@ -90,6 +90,7 @@ class OpenRouterClient:
         model: str | None = None,
         exclusions: dict[str, dict[str, Any]] | None = None,
         retry_limit: int | None = None,
+        catalog_keys: Sequence[str] | None = None,
     ) -> CatalogBundle:
         """Generate new catalogs using the configured model."""
 
@@ -100,6 +101,18 @@ class OpenRouterClient:
         resolved_key = api_key or self._settings.openrouter_api_key
         if not resolved_key:
             raise RuntimeError("OpenRouter API key is required to generate catalogs")
+
+        if catalog_keys:
+            mapping = {definition.key: definition for definition in STABLE_CATALOGS}
+            definitions = [
+                mapping[key]
+                for key in catalog_keys
+                if key in mapping
+            ]
+            if not definitions:
+                definitions = list(STABLE_CATALOGS)
+        else:
+            definitions = list(STABLE_CATALOGS)
 
         exclusion_map = self._normalise_exclusions(exclusions)
         if retry_limit is None:
@@ -122,14 +135,14 @@ class OpenRouterClient:
                     exclusions=(exclusion_map or {}).get(definition.content_type),
                 )
             )
-            for index, definition in enumerate(STABLE_CATALOGS)
+            for index, definition in enumerate(definitions)
         ]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
         movie_catalogs: list[Catalog] = []
         series_catalogs: list[Catalog] = []
 
-        for definition, result in zip(STABLE_CATALOGS, results):
+        for definition, result in zip(definitions, results):
             if isinstance(result, Exception):
                 logger.warning(
                     "Catalog generation failed for %s lane: %s",

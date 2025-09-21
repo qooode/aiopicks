@@ -32,6 +32,7 @@ class Profile(Base):
     trakt_history_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
         JSON, nullable=True
     )
+    catalog_keys: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     catalog_count: Mapped[int] = mapped_column(Integer, default=STABLE_CATALOG_COUNT)
     catalog_item_count: Mapped[int] = mapped_column(Integer, default=8)
     combine_for_you_catalogs: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

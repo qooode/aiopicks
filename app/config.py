@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
-from typing import Literal
+from typing import Iterable, Literal, Sequence
 
-from pydantic import AliasChoices, Field, HttpUrl
+from pydantic import AliasChoices, Field, HttpUrl, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .stable_catalogs import STABLE_CATALOG_COUNT
+from .stable_catalogs import STABLE_CATALOGS, STABLE_CATALOG_COUNT
 
 
 class Settings(BaseSettings):
@@ -37,11 +38,14 @@ class Settings(BaseSettings):
         default="google/gemini-2.5-flash-lite", alias="OPENROUTER_MODEL"
     )
 
-    catalog_count: int = Field(
-        default=STABLE_CATALOG_COUNT,
-        alias="CATALOG_COUNT",
-        ge=STABLE_CATALOG_COUNT,
-        le=STABLE_CATALOG_COUNT,
+    enabled_catalogs: tuple[str, ...] = Field(
+        default=tuple(definition.key for definition in STABLE_CATALOGS),
+        validation_alias=AliasChoices(
+            "ENABLED_CATALOGS",
+            "CATALOG_KEYS",
+            "CATALOGS",
+            "CATALOG_COUNT",
+        ),
     )
     catalog_item_count: int = Field(
         default=40, alias="CATALOG_ITEM_COUNT", ge=1, le=100
@@ -88,6 +92,65 @@ class Settings(BaseSettings):
         """Maintain backwards compatibility with the previous setting name."""
 
         return self.metadata_addon_url
+
+    @computed_field(return_type=int)
+    @property
+    def catalog_count(self) -> int:
+        """Return the number of enabled catalog lanes."""
+
+        return len(self.enabled_catalogs)
+
+    @field_validator("enabled_catalogs", mode="before")
+    @classmethod
+    def _parse_enabled_catalogs(cls, value: object) -> Iterable[str] | object:
+        """Normalise enabled catalog inputs from strings or numeric counts."""
+
+        if value is None or value == "":
+            return tuple(definition.key for definition in STABLE_CATALOGS)
+        if isinstance(value, (tuple, list, set)):
+            return tuple(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return tuple(definition.key for definition in STABLE_CATALOGS)
+            if stripped.startswith("["):
+                try:
+                    parsed = json.loads(stripped)
+                except json.JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, Sequence):
+                    return tuple(parsed)
+            parts = [part.strip() for part in stripped.split(",") if part.strip()]
+            return tuple(parts) if parts else tuple(definition.key for definition in STABLE_CATALOGS)
+        if isinstance(value, (int, float)):
+            count = int(value)
+            if count <= 0:
+                return tuple(definition.key for definition in STABLE_CATALOGS)
+            limited = min(count, STABLE_CATALOG_COUNT)
+            return tuple(
+                definition.key for definition in STABLE_CATALOGS[:limited]
+            )
+        return value
+
+    @field_validator("enabled_catalogs")
+    @classmethod
+    def _validate_enabled_catalogs(
+        cls, value: Iterable[str]
+    ) -> tuple[str, ...]:
+        """Ensure enabled catalogs exist and de-duplicate while preserving order."""
+
+        valid_keys = {definition.key for definition in STABLE_CATALOGS}
+        resolved: list[str] = []
+        seen: set[str] = set()
+        for raw_key in value:
+            key = str(raw_key).strip().lower()
+            if not key or key in seen or key not in valid_keys:
+                continue
+            seen.add(key)
+            resolved.append(key)
+        if not resolved:
+            raise ValueError("At least one catalog must be enabled")
+        return tuple(resolved)
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
