@@ -27,7 +27,7 @@ class Settings(BaseSettings):
         default=None, alias="TRAKT_REDIRECT_URI"
     )
     trakt_history_limit: int = Field(
-        default=1_000, alias="TRAKT_HISTORY_LIMIT", ge=10, le=2000
+        default=2_000, alias="TRAKT_HISTORY_LIMIT", ge=10, le=2000
     )
 
     openrouter_api_key: str | None = Field(
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
         le=STABLE_CATALOG_COUNT,
     )
     catalog_item_count: int = Field(
-        default=8, alias="CATALOG_ITEM_COUNT", ge=1, le=100
+        default=40, alias="CATALOG_ITEM_COUNT", ge=1, le=100
     )
     refresh_interval_seconds: int = Field(
         default=43_200, alias="REFRESH_INTERVAL", ge=3_600
@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     )
 
     generation_retry_limit: int = Field(
-        default=3, alias="GENERATION_RETRY_LIMIT", ge=0, le=10
+        default=1, alias="GENERATION_RETRY_LIMIT", ge=0, le=10
     )
 
     trakt_api_url: HttpUrl = Field(
