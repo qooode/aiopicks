@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -13,6 +14,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+
+from .stable_catalogs import STABLE_CATALOG_KEYS
 
 
 class Base(DeclarativeBase):
@@ -90,6 +93,16 @@ class Database:
         _ensure_column(
             "trakt_history_snapshot",
             "ALTER TABLE profiles ADD COLUMN trakt_history_snapshot JSON",
+        )
+        default_keys_json = json.dumps(list(STABLE_CATALOG_KEYS))
+        escaped_keys = default_keys_json.replace("'", "''")
+        _ensure_column(
+            "catalog_keys",
+            "ALTER TABLE profiles ADD COLUMN catalog_keys JSON",
+            (
+                "UPDATE profiles SET catalog_keys = '{json}' "
+                "WHERE catalog_keys IS NULL"
+            ).format(json=escaped_keys),
         )
 
     async def dispose(self) -> None:
