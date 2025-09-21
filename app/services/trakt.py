@@ -119,11 +119,12 @@ class TraktClient:
                 total = self._extract_total_count(response, fallback=len(data))
                 total_pages = self._extract_page_count(response)
 
+            fetched_any = True
+
             if not data:
                 break
 
             items.extend(data)
-            fetched_any = True
 
             if len(data) < page_size:
                 break
