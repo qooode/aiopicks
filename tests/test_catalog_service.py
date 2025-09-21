@@ -12,11 +12,18 @@ from app.database import Database
 from app.db_models import CatalogRecord, Profile
 from app.models import Catalog, CatalogItem
 from app.services.metadata_addon import MetadataAddonClient, MetadataMatch
-from app.services.catalog_generator import CatalogService
-from app.services.catalog_generator import ProfileState, ProfileStatus
+from app.services.catalog_generator import (
+    CatalogService,
+    ManifestConfig,
+    ProfileState,
+    ProfileStatus,
+    FOR_YOU_COMBINED_DESCRIPTION,
+    FOR_YOU_COMBINED_TITLE,
+    FOR_YOU_MOVIE_CATALOG_ID,
+    FOR_YOU_SERIES_CATALOG_ID,
+)
 from app.services.openrouter import OpenRouterClient
 from app.services.trakt import TraktClient
-from app.services.catalog_generator import ManifestConfig
 
 
 class RefreshingCatalogService(CatalogService):
@@ -208,6 +215,89 @@ def test_catalog_payload_available_after_refresh(tmp_path) -> None:
     asyncio.run(runner())
 
 
+def test_reconcile_for_you_catalogs_combines_when_enabled() -> None:
+    """When the blend flag is enabled the service merges For You lanes."""
+
+    service = CatalogService.__new__(CatalogService)
+    now = datetime.utcnow()
+    movie_catalog = Catalog(
+        id=FOR_YOU_MOVIE_CATALOG_ID,
+        type="movie",
+        title="For You · Movies",
+        description="Movie lane",
+        seed="movie-seed",
+        items=[
+            CatalogItem(title="Movie One", type="movie", imdb_id="tt1000001"),
+            CatalogItem(title="Movie Two", type="movie", imdb_id="tt1000002"),
+        ],
+        generated_at=now,
+    )
+    series_catalog = Catalog(
+        id=FOR_YOU_SERIES_CATALOG_ID,
+        type="series",
+        title="For You · Series",
+        description="Series lane",
+        seed="series-seed",
+        items=[
+            CatalogItem(title="Show One", type="series", imdb_id="tt2000001"),
+            CatalogItem(title="Show Two", type="series", imdb_id="tt2000002"),
+        ],
+        generated_at=now - timedelta(minutes=5),
+    )
+    catalogs = {
+        "movie": {movie_catalog.id: movie_catalog},
+        "series": {series_catalog.id: series_catalog},
+    }
+
+    service._reconcile_for_you_catalogs(catalogs, combine=True, item_limit=2)
+
+    combined = catalogs["movie"][FOR_YOU_MOVIE_CATALOG_ID]
+    assert combined.title == FOR_YOU_COMBINED_TITLE
+    assert combined.description == FOR_YOU_COMBINED_DESCRIPTION
+    assert [item.title for item in combined.items] == [
+        "Movie One",
+        "Show One",
+        "Movie Two",
+        "Show Two",
+    ]
+    assert FOR_YOU_SERIES_CATALOG_ID not in catalogs["series"]
+
+
+def test_reconcile_for_you_catalogs_noop_when_disabled() -> None:
+    """Without the blend flag the original catalogs remain untouched."""
+
+    service = CatalogService.__new__(CatalogService)
+    now = datetime.utcnow()
+    movie_catalog = Catalog(
+        id=FOR_YOU_MOVIE_CATALOG_ID,
+        type="movie",
+        title="For You · Movies",
+        description="Movie lane",
+        seed="movie-seed",
+        items=[CatalogItem(title="Movie Solo", type="movie", imdb_id="tt3000001")],
+        generated_at=now,
+    )
+    series_catalog = Catalog(
+        id=FOR_YOU_SERIES_CATALOG_ID,
+        type="series",
+        title="For You · Series",
+        description="Series lane",
+        seed="series-seed",
+        items=[CatalogItem(title="Show Solo", type="series", imdb_id="tt4000001")],
+        generated_at=now,
+    )
+    catalogs = {
+        "movie": {movie_catalog.id: movie_catalog},
+        "series": {series_catalog.id: series_catalog},
+    }
+
+    service._reconcile_for_you_catalogs(catalogs, combine=False, item_limit=2)
+
+    untouched = catalogs["movie"][FOR_YOU_MOVIE_CATALOG_ID]
+    assert untouched.title == "For You · Movies"
+    assert FOR_YOU_SERIES_CATALOG_ID in catalogs["series"]
+
+
 def test_profile_status_payload_flags() -> None:
     """Ready flag reflects catalog availability and refresh state."""
 
@@ -236,6 +326,7 @@ def test_profile_status_payload_flags() -> None:
     assert payload["ready"] is True
     assert payload["hasCatalogs"] is True
     assert payload["refreshing"] is False
+    assert payload["combineForYou"] is False
 
     refreshing_status = ProfileStatus(
         state=base_state,

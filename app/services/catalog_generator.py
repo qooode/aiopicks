@@ -33,6 +33,13 @@ from .trakt import HistoryBatch, TraktClient
 
 logger = logging.getLogger(__name__)
 
+FOR_YOU_MOVIE_CATALOG_ID = "aiopicks-movie-for-you-movies"
+FOR_YOU_SERIES_CATALOG_ID = "aiopicks-series-for-you-series"
+FOR_YOU_COMBINED_TITLE = "For You"
+FOR_YOU_COMBINED_DESCRIPTION = (
+    "Alternating film and series picks tuned to what you've watched lately."
+)
+
 
 class ManifestConfig(BaseModel):
     """Normalized view of query parameters controlling profile selection."""
@@ -74,6 +81,14 @@ class ManifestConfig(BaseModel):
         default=None,
         ge=3_600,
         validation_alias=AliasChoices("refreshInterval", "refreshSeconds"),
+    )
+    combine_for_you_catalogs: bool | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "combineForYou",
+            "combineForYouCatalog",
+            "forYouUnified",
+        ),
     )
     response_cache: int | None = Field(
         default=None,
@@ -135,6 +150,23 @@ class ManifestConfig(BaseModel):
         except (TypeError, ValueError) as exc:
             raise ValueError("Value must be an integer") from exc
 
+    @field_validator("combine_for_you_catalogs", mode="before")
+    @classmethod
+    def _parse_optional_bool(cls, value: object) -> object:
+        if value is None or value == "":
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                return True
+            if lowered in {"0", "false", "no", "off"}:
+                return False
+        raise ValueError("Value must be a boolean")
+
     @field_validator(
         "profile_id",
         "openrouter_key",
@@ -176,6 +208,7 @@ class ProfileState:
     trakt_show_history_count: int = 0
     trakt_history_refreshed_at: datetime | None = None
     trakt_history_snapshot: dict[str, Any] | None = None
+    combine_for_you_catalogs: bool = False
 
 
 @dataclass
@@ -224,6 +257,7 @@ class ProfileStatus:
             "needsRefresh": self.needs_refresh,
             "refreshing": self.refreshing,
             "ready": self.has_catalogs and not self.refreshing,
+            "combineForYou": self.state.combine_for_you_catalogs,
         }
 
     def _history_payload(self) -> dict[str, Any]:
@@ -501,6 +535,11 @@ class CatalogService:
             )
             catalogs = self._bundle_to_dict(bundle)
             await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
+            self._reconcile_for_you_catalogs(
+                catalogs,
+                combine=state.combine_for_you_catalogs,
+                item_limit=state.catalog_item_count,
+            )
             if not (catalogs["movie"] or catalogs["series"]):
                 logger.warning(
                     "AI returned an empty catalog bundle for profile %s; falling back to history",
@@ -523,6 +562,11 @@ class CatalogService:
                 item_limit=state.catalog_item_count,
             )
             await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
+            self._reconcile_for_you_catalogs(
+                catalogs,
+                combine=state.combine_for_you_catalogs,
+                item_limit=state.catalog_item_count,
+            )
 
         await self._store_catalogs(state, catalogs)
 
@@ -627,6 +671,9 @@ class CatalogService:
             ),
             trakt_history_snapshot=getattr(
                 profile, "trakt_history_snapshot", None
+            ),
+            combine_for_you_catalogs=bool(
+                getattr(profile, "combine_for_you_catalogs", False)
             ),
         )
 
@@ -941,6 +988,78 @@ class CatalogService:
                     update={"items": updated_items}
                 )
 
+    def _reconcile_for_you_catalogs(
+        self,
+        catalogs: dict[str, dict[str, Catalog]],
+        *,
+        combine: bool,
+        item_limit: int,
+    ) -> None:
+        """Blend or retain the opening For You lanes based on profile preference."""
+
+        if not combine:
+            return
+
+        movie_map = catalogs.get("movie") or {}
+        series_map = catalogs.get("series") or {}
+        movie_catalog = movie_map.get(FOR_YOU_MOVIE_CATALOG_ID)
+        series_catalog = series_map.get(FOR_YOU_SERIES_CATALOG_ID)
+        if movie_catalog is None or series_catalog is None:
+            return
+
+        movie_items = list(movie_catalog.items)
+        series_items = list(series_catalog.items)
+        if not movie_items and not series_items:
+            return
+
+        target = max(int(item_limit), 0) if isinstance(item_limit, int) else 0
+        total_available = len(movie_items) + len(series_items)
+        if target <= 0:
+            total_limit = total_available
+        else:
+            total_limit = min(total_available, target * 2)
+        if total_limit <= 0:
+            return
+
+        combined: list[CatalogItem] = []
+        movie_index = 0
+        series_index = 0
+        pick_movie = len(movie_items) >= len(series_items)
+
+        while len(combined) < total_limit and (
+            movie_index < len(movie_items) or series_index < len(series_items)
+        ):
+            if pick_movie and movie_index < len(movie_items):
+                combined.append(movie_items[movie_index])
+                movie_index += 1
+            elif series_index < len(series_items):
+                combined.append(series_items[series_index])
+                series_index += 1
+            elif movie_index < len(movie_items):
+                combined.append(movie_items[movie_index])
+                movie_index += 1
+            pick_movie = not pick_movie
+
+        seed_parts = [
+            part
+            for part in (movie_catalog.seed, series_catalog.seed)
+            if isinstance(part, str) and part.strip()
+        ]
+        combined_seed = "+".join(dict.fromkeys(seed_parts)) if seed_parts else None
+        generated_at = max(movie_catalog.generated_at, series_catalog.generated_at)
+
+        updated_movie = movie_catalog.model_copy(
+            update={
+                "title": FOR_YOU_COMBINED_TITLE,
+                "description": FOR_YOU_COMBINED_DESCRIPTION,
+                "items": combined,
+                "seed": combined_seed or movie_catalog.seed,
+                "generated_at": generated_at,
+            }
+        )
+        movie_map[FOR_YOU_MOVIE_CATALOG_ID] = updated_movie
+        series_map.pop(FOR_YOU_SERIES_CATALOG_ID, None)
+
     async def _derive_profile_identity(
         self, config: ManifestConfig
     ) -> ProfileIdentity:
@@ -995,6 +1114,11 @@ class CatalogService:
                         config.generation_retry_limit
                         if config.generation_retry_limit is not None
                         else self._settings.generation_retry_limit
+                    ),
+                    combine_for_you_catalogs=(
+                        config.combine_for_you_catalogs
+                        if config.combine_for_you_catalogs is not None
+                        else self._settings.combine_for_you_catalogs
                     ),
                     refresh_interval_seconds=config.refresh_interval or self._settings.refresh_interval_seconds,
                     response_cache_seconds=config.response_cache or self._settings.response_cache_seconds,
@@ -1063,6 +1187,14 @@ class CatalogService:
                     if new_metadata_url != getattr(profile, "metadata_addon_url", None):
                         profile.metadata_addon_url = new_metadata_url
                         refresh_required = True
+                if config.combine_for_you_catalogs is not None and (
+                    bool(config.combine_for_you_catalogs)
+                    != bool(getattr(profile, "combine_for_you_catalogs", False))
+                ):
+                    profile.combine_for_you_catalogs = bool(
+                        config.combine_for_you_catalogs
+                    )
+                    refresh_required = True
                 if profile.next_refresh_at is None:
                     profile.next_refresh_at = now
                 profile.updated_at = now
@@ -1206,6 +1338,7 @@ class CatalogService:
                     trakt_history_limit=self._settings.trakt_history_limit,
                     catalog_count=self._settings.catalog_count,
                     catalog_item_count=self._settings.catalog_item_count,
+                    combine_for_you_catalogs=self._settings.combine_for_you_catalogs,
                     generation_retry_limit=self._settings.generation_retry_limit,
                     refresh_interval_seconds=self._settings.refresh_interval_seconds,
                     response_cache_seconds=self._settings.response_cache_seconds,
@@ -1247,6 +1380,14 @@ class CatalogService:
                     updated = True
                 if getattr(profile, "metadata_addon_url", None) != self._default_metadata_addon_url:
                     profile.metadata_addon_url = self._default_metadata_addon_url
+                    updated = True
+                if (
+                    bool(getattr(profile, "combine_for_you_catalogs", False))
+                    != self._settings.combine_for_you_catalogs
+                ):
+                    profile.combine_for_you_catalogs = (
+                        self._settings.combine_for_you_catalogs
+                    )
                     updated = True
                 if profile.trakt_client_id != self._settings.trakt_client_id:
                     profile.trakt_client_id = self._settings.trakt_client_id

@@ -21,10 +21,16 @@ class StableCatalogDefinition:
 
 STABLE_CATALOGS: tuple[StableCatalogDefinition, ...] = (
     StableCatalogDefinition(
-        key="because-you-watched",
-        title="Because You Watched",
-        description="Similar series to your recent watches, extending the moods you just binged.",
+        key="for-you-series",
+        title="For You · Series",
+        description="A pulse of fresh shows tuned to the tones, casts, and formats you’ve binged most recently.",
         content_type="series",
+    ),
+    StableCatalogDefinition(
+        key="for-you-movies",
+        title="For You · Movies",
+        description="Hand-picked films echoing the vibes and genres dominating your latest movie nights.",
+        content_type="movie",
     ),
     StableCatalogDefinition(
         key="top-genre-picks",
