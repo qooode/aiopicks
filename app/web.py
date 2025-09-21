@@ -361,7 +361,7 @@ CONFIG_TEMPLATE = dedent(
                     </select>
                 </div>
                 <div class="field">
-                    <label for="config-cache-ttl">Response cache <span class="helper">Stremio responses stay fresh for...</span></label>
+                    <label for="config-cache-ttl">Response cache <span class="helper">How long Stremio reuses the last response before refetching (AI refresh uses the cadence above)</span></label>
                     <select id="config-cache-ttl">
                         <option value="300">5 minutes</option>
                         <option value="900">15 minutes</option>
