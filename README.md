@@ -107,7 +107,7 @@ below lists the most relevant options:
 | `OPENROUTER_MODEL` | – | Model identifier requested from OpenRouter (configurable per profile). |
 | `TRAKT_CLIENT_ID` / `TRAKT_CLIENT_SECRET` | – | Credentials needed for device authentication from the config UI. |
 | `TRAKT_ACCESS_TOKEN` | – | Optional long-lived token if you prefer to preconfigure the profile without using the UI. |
-| `TRAKT_HISTORY_LIMIT` | `1000` | Maximum Trakt history items stored for exclusions (10–2000). |
+| `TRAKT_HISTORY_LIMIT` | `1000` | Maximum Trakt history items stored for exclusions (10–10,000). |
 | `CATALOG_ITEM_COUNT` | `8` | Number of items the AI should return for each lane. |
 | `GENERATION_RETRY_LIMIT` | `3` | Extra attempts allowed when lanes return too few results. |
 | `REFRESH_INTERVAL` | `43200` (12h) | How often the background worker re-generates catalogs per profile. |
