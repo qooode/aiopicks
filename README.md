@@ -37,12 +37,13 @@ never goes empty.
 
 ## 📚 Stable catalog lanes
 
-AIOPicks always publishes the full set of 17 themed rows below. The AI refreshes the contents
+AIOPicks always publishes the full set of 18 themed rows below. The AI refreshes the contents
 while the lane identities remain consistent, making the add-on easy to browse inside Stremio.
 
 | Lane | Type | Intent |
 |---|---|---|
-| Because You Watched | Series | Similar series to your recent watches, extending the moods you just binged. |
+| For You · Series | Series | A pulse of fresh shows tuned to the tones, casts, and formats you’ve binged most recently. |
+| For You · Movies | Movies | Hand-picked films echoing the vibes and genres dominating your latest movie nights. |
 | Your Top Genre Picks | Movies | Fresh films expanding on the genres you play most—thrillers, comedies, and more. |
 | Actors You Love | Movies | Movies headlined by the performers you return to again and again. |
 | Directors You Return To | Movies | Films from directors already in your rotation, including acclaimed deep cuts. |
@@ -85,12 +86,13 @@ while the lane identities remain consistent, making the add-on easy to browse in
 ## ⚙️ Configuration workflow
 
 1. **Create a `.env` file** – copy `.env.sample` and fill in at least your OpenRouter key plus
-   Trakt API client credentials. The catalog count is fixed at 17 lanes, so no tuning is required.
+   Trakt API client credentials. The catalog count is fixed at 18 lanes, so no tuning is required.
 2. **Start the server** – run `uvicorn app.main:app --reload --port 3000` (or use Docker).
 3. **Visit `/config`** – open `http://localhost:3000/config` to finish setup. The assistant can:
    - guide you through Trakt device authentication and store the resulting access token;
    - override OpenRouter model/key per profile;
-   - choose the metadata source you want to enrich catalogs with;
+    - choose the metadata source you want to enrich catalogs with;
+   - blend the two “For You” rows into a single mixed feed or keep separate movie/series lanes;
    - adjust refresh cadence, cache duration, and item counts per lane;
    - trigger an immediate regeneration and check profile status.
 4. **Install in Stremio** – once the status indicator shows healthy catalogs, add the manifest URL
@@ -115,6 +117,7 @@ below lists the most relevant options:
 | `METADATA_ADDON_URL` | – | Base URL for the Stremio-compatible metadata source used to enrich items. |
 | `DATABASE_URL` | `sqlite+aiosqlite:///./aiopicks.db` | Location of the SQLite database that stores profiles and catalogs. |
 | `APP_NAME` | `AIOPicks` | Display name surfaced in the manifest and config UI. |
+| `COMBINE_FOR_YOU_CATALOGS` | `false` | Set to `true` to merge the opening movie/series “For You” rows into a single blended lane by default. |
 
 Advanced variables such as `HOST`, `PORT`, `TRAKT_API_URL`, and `OPENROUTER_API_URL` are also
 available for bespoke deployments.

@@ -71,6 +71,20 @@ def test_manifest_allows_retry_override() -> None:
     assert service.last_config.generation_retry_limit == 5
 
 
+def test_manifest_allows_for_you_override() -> None:
+    app = FastAPI()
+    register_routes(app)
+    service = DummyCatalogService()
+    app.state.catalog_service = service
+
+    with TestClient(app) as client:
+        response = client.get("/manifest/combineForYou/true/manifest.json")
+
+    assert response.status_code == 200
+    assert service.last_config is not None
+    assert service.last_config.combine_for_you_catalogs is True
+
+
 def test_manifest_rejects_malformed_path_overrides() -> None:
     app = FastAPI()
     register_routes(app)

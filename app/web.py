@@ -129,6 +129,29 @@ CONFIG_TEMPLATE = dedent(
             font-weight: 600;
             font-size: 0.95rem;
         }
+        .field.field-checkbox {
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+        .field.field-checkbox label.checkbox {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.65rem;
+            font-weight: 600;
+            font-size: 0.95rem;
+            color: var(--text-primary);
+        }
+        .field.field-checkbox label.checkbox input[type="checkbox"] {
+            width: 1.1rem;
+            height: 1.1rem;
+            accent-color: var(--accent);
+        }
+        .field.field-checkbox p.helper-text {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
         .actions {
             display: flex;
             gap: 0.75rem;
@@ -339,6 +362,13 @@ CONFIG_TEMPLATE = dedent(
                     <label for="config-metadata-addon">Metadata add-on URL <span class="helper">Optional – used to fetch posters and IDs</span></label>
                     <input id="config-metadata-addon" type="text" placeholder="https://example-addon.strem.fun" inputmode="url" spellcheck="false" />
                 </div>
+                <div class="field field-checkbox">
+                    <label class="checkbox" for="config-combine-for-you">
+                        <input id="config-combine-for-you" type="checkbox" />
+                        <span>Blend “For You” rows</span>
+                    </label>
+                    <p class="helper-text">Merge the opening movie and series lanes into one alternating feed.</p>
+                </div>
                 <div class="field">
                     <label for="config-catalog-items">Items per catalog <span class="range-value" id="catalog-items-value"></span></label>
                     <input id="config-catalog-items" type="range" min="4" max="100" step="1" />
@@ -391,6 +421,7 @@ CONFIG_TEMPLATE = dedent(
             const openrouterKey = document.getElementById('config-openrouter-key');
             const openrouterModel = document.getElementById('config-openrouter-model');
             const metadataAddonInput = document.getElementById('config-metadata-addon');
+            const combineForYouToggle = document.getElementById('config-combine-for-you');
             const catalogItemsSlider = document.getElementById('config-catalog-items');
             const catalogItemsValue = document.getElementById('catalog-items-value');
             const generationRetriesSlider = document.getElementById('config-generation-retries');
@@ -430,6 +461,7 @@ CONFIG_TEMPLATE = dedent(
             let copyTimeout = null;
             let historyLimitTouched = false;
             let generationRetriesTouched = false;
+            let combineForYouTouched = false;
             let preparePending = false;
             let profileStatus = null;
             let statusPollTimer = null;
@@ -513,6 +545,9 @@ CONFIG_TEMPLATE = dedent(
 
             openrouterModel.value = defaults.openrouterModel || '';
             metadataAddonInput.value = defaults.metadataAddon || '';
+            if (combineForYouToggle) {
+                combineForYouToggle.checked = Boolean(defaults.combineForYou);
+            }
             const defaultCatalogItems = defaults.catalogItemCount || catalogItemsSlider.min || 4;
             catalogItemsSlider.value = defaultCatalogItems;
             catalogItemsValue.textContent = catalogItemsSlider.value;
@@ -576,6 +611,13 @@ CONFIG_TEMPLATE = dedent(
                 markProfileDirty();
                 updateManifestPreview();
             });
+            if (combineForYouToggle) {
+                combineForYouToggle.addEventListener('change', () => {
+                    combineForYouTouched = true;
+                    markProfileDirty();
+                    updateManifestPreview();
+                });
+            }
             openrouterKey.addEventListener('input', () => {
                 markProfileDirty();
                 updateManifestPreview();
@@ -957,6 +999,7 @@ CONFIG_TEMPLATE = dedent(
                     generationRetryLimit: Number.isFinite(retryLimit) && retryLimit >= 0 ? retryLimit : 0,
                     traktHistoryLimit: Number.isFinite(historyLimit) && historyLimit > 0 ? historyLimit : 0,
                     traktHistory: history,
+                    combineForYou: Boolean(raw.combineForYou),
                 };
             }
 
@@ -965,6 +1008,7 @@ CONFIG_TEMPLATE = dedent(
                     openrouterKey: openrouterKey.value.trim(),
                     openrouterModel: openrouterModel.value.trim(),
                     metadataAddon: metadataAddonInput.value.trim(),
+                    combineForYou: combineForYouToggle ? combineForYouToggle.checked : false,
                     catalogItems: catalogItemsSlider.value,
                     generationRetries: generationRetriesSlider.value,
                     traktHistoryLimit: historySlider.value,
@@ -1000,6 +1044,7 @@ CONFIG_TEMPLATE = dedent(
                 if (settings.cacheTtl) payload.cacheTtl = Number(settings.cacheTtl);
                 if (settings.traktAccessToken) payload.traktAccessToken = settings.traktAccessToken;
                 if (settings.metadataAddon) payload.metadataAddon = settings.metadataAddon;
+                if (settings.combineForYou) payload.combineForYou = true;
                 return payload;
             }
 
@@ -1053,6 +1098,7 @@ CONFIG_TEMPLATE = dedent(
                         return;
                     }
                     profileStatus = normalized;
+                    syncCombineForYouFromStatus();
                     syncHistoryLimitFromStatus();
                     syncGenerationRetriesFromStatus();
                     updateManifestPreview();
@@ -1095,6 +1141,7 @@ CONFIG_TEMPLATE = dedent(
                         return null;
                     }
                     profileStatus = normalized;
+                    syncCombineForYouFromStatus();
                     syncHistoryLimitFromStatus();
                     syncGenerationRetriesFromStatus();
                     updateManifestPreview();
@@ -1125,6 +1172,7 @@ CONFIG_TEMPLATE = dedent(
                     'openrouterKey',
                     'openrouterModel',
                     'metadataAddon',
+                    'combineForYou',
                     'catalogItems',
                     'generationRetries',
                     'traktHistoryLimit',
@@ -1151,6 +1199,18 @@ CONFIG_TEMPLATE = dedent(
 
             function updateManifestPreview() {
                 manifestPreview.textContent = buildConfiguredUrl();
+            }
+
+            function syncCombineForYouFromStatus() {
+                if (!combineForYouToggle || !profileStatus) {
+                    return;
+                }
+                const desired = Boolean(profileStatus.combineForYou);
+                if (combineForYouTouched && combineForYouToggle.checked !== desired) {
+                    return;
+                }
+                combineForYouTouched = false;
+                combineForYouToggle.checked = desired;
             }
 
             function syncHistoryLimitFromStatus() {
@@ -1503,6 +1563,7 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
         "metadataAddon": (
             str(settings.metadata_addon_url) if settings.metadata_addon_url else ""
         ),
+        "combineForYou": settings.combine_for_you_catalogs,
     }
     defaults_json = json.dumps(defaults).replace("</", "<\\/")
 

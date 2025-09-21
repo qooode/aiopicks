@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -34,6 +34,7 @@ class Profile(Base):
     )
     catalog_count: Mapped[int] = mapped_column(Integer, default=STABLE_CATALOG_COUNT)
     catalog_item_count: Mapped[int] = mapped_column(Integer, default=8)
+    combine_for_you_catalogs: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     generation_retry_limit: Mapped[int] = mapped_column(Integer, default=3)
     refresh_interval_seconds: Mapped[int] = mapped_column(Integer, default=43_200)
     response_cache_seconds: Mapped[int] = mapped_column(Integer, default=1_800)
