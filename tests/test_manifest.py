@@ -50,13 +50,10 @@ def test_manifest_allows_path_overrides() -> None:
     app.state.catalog_service = service
 
     with TestClient(app) as client:
-        response = client.get(
-            "/manifest/catalogCount/5/catalogItems/9/manifest.json"
-        )
+        response = client.get("/manifest/catalogItems/9/manifest.json")
 
     assert response.status_code == 200
     assert service.last_config is not None
-    assert service.last_config.catalog_count == 5
     assert service.last_config.catalog_item_count == 9
 
 
@@ -66,7 +63,7 @@ def test_manifest_rejects_malformed_path_overrides() -> None:
     app.state.catalog_service = DummyCatalogService()
 
     with TestClient(app) as client:
-        response = client.get("/manifest/catalogCount/6/catalogItems/manifest.json")
+        response = client.get("/manifest/catalogItems/6/refreshInterval/manifest.json")
 
     assert response.status_code == 400
 
@@ -79,7 +76,7 @@ def test_manifest_rejects_query_overrides() -> None:
     with TestClient(app) as client:
         response = client.get(
             "/manifest.json",
-            params={"catalogCount": "3"},
+            params={"catalogItems": "12"},
         )
 
     assert response.status_code == 400

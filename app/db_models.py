@@ -9,6 +9,7 @@ from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, Unique
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
+from .stable_catalogs import STABLE_CATALOG_COUNT
 
 
 class Profile(Base):
@@ -31,7 +32,7 @@ class Profile(Base):
     trakt_history_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
         JSON, nullable=True
     )
-    catalog_count: Mapped[int] = mapped_column(Integer, default=6)
+    catalog_count: Mapped[int] = mapped_column(Integer, default=STABLE_CATALOG_COUNT)
     catalog_item_count: Mapped[int] = mapped_column(Integer, default=8)
     refresh_interval_seconds: Mapped[int] = mapped_column(Integer, default=43_200)
     response_cache_seconds: Mapped[int] = mapped_column(Integer, default=1_800)

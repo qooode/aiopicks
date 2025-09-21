@@ -306,7 +306,6 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 for value in (
                     cfg.openrouter_key,
                     cfg.openrouter_model,
-                    cfg.catalog_count,
                     cfg.catalog_item_count,
                     cfg.refresh_interval,
                     cfg.response_cache,
@@ -348,11 +347,6 @@ def register_routes(fastapi_app: FastAPI) -> None:
             if (
                 config.openrouter_model is not None
                 and state.openrouter_model != config.openrouter_model
-            ):
-                return True
-            if (
-                config.catalog_count is not None
-                and state.catalog_count != config.catalog_count
             ):
                 return True
             if (
