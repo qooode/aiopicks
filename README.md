@@ -3,7 +3,7 @@
 <p align="center">
   <strong>AI-personalised discovery rows for your Stremio library.</strong><br />
   AIOPicks turns your Trakt history into a rotating set of themed catalogs powered by
-  OpenRouter's <code>google/gemini-2.5-flash-lite</code> model.
+  OpenRouter-hosted large language models.
 </p>
 
 ---
@@ -12,7 +12,7 @@
 
 AIOPicks is a FastAPI-powered Stremio add-on that keeps a **stable collection of curated lanes**
 up to date with the help of generative AI. Every profile stores its own preferences and history
-snapshot. When a refresh runs, the service asks Gemini 2.5 Flash Lite to refill each lane with
+snapshot. When a refresh runs, the service asks your configured OpenRouter model to refill each lane with
 new titles that match the theme while avoiding anything you've already logged on Trakt.
 
 Because everything runs on your own server, your data never leaves your control. Connect your
@@ -25,10 +25,10 @@ fresh recommendations in seconds.
    the configured limit) and stores a lightweight snapshot in a local SQLite database.
 2. **Taste summarisation** – AIOPicks builds a condensed brief of your viewing patterns to send
    alongside the AI prompt.
-3. **Lane generation** – Gemini creates new picks for every predefined catalog lane while
+3. **Lane generation** – The LLM creates new picks for every predefined catalog lane while
    respecting exclusions, minimum rating rules, and retry limits.
-4. **Metadata enrichment** – Optional Cinemeta-compatible lookups fill in artwork and IDs so
-   Stremio can merge external metadata.
+4. **Metadata enrichment** – Optional lookups against your preferred Stremio-compatible metadata
+   service fill in artwork and IDs so Stremio can merge external metadata.
 5. **Caching & refresh** – Generated catalogs are cached for the configured TTL. Background
    jobs refresh each profile on a schedule, and a manual `/config` trigger can force new runs.
 
@@ -67,8 +67,8 @@ while the lane identities remain consistent, making the add-on easy to browse in
   exclusion on every refresh.
 - **OpenRouter orchestration** – Each lane request uses structured prompts, retry controls, and
   deterministic seeds to keep results grounded yet surprising.
-- **Metadata bridging** – Point the add-on at Cinemeta (or another compatible metadata service)
-  so returned catalogs include posters, backdrops, and ID fields Stremio understands.
+- **Metadata bridging** – Connect the add-on to whichever Stremio-compatible metadata service you
+  prefer so returned catalogs include posters, backdrops, and ID fields Stremio understands.
 - **Profile persistence** – Configuration overrides, AI seeds, and generated catalogs are stored
   in SQLite so the add-on survives restarts without losing personalisation.
 - **Graceful degradation** – When the AI is unavailable, fallback catalogs based solely on your
@@ -78,7 +78,7 @@ while the lane identities remain consistent, making the add-on easy to browse in
 
 - Python 3.10+
 - A Trakt account with viewing history (device code login recommended)
-- OpenRouter API key with access to `google/gemini-2.5-flash-lite`
+- OpenRouter API key with access to at least one supported model
 - (Optional) Docker if you prefer container deployment
 
 ## ⚙️ Configuration workflow
@@ -89,7 +89,7 @@ while the lane identities remain consistent, making the add-on easy to browse in
 3. **Visit `/config`** – open `http://localhost:3000/config` to finish setup. The assistant can:
    - guide you through Trakt device authentication and store the resulting access token;
    - override OpenRouter model/key per profile;
-   - point to a different Cinemeta-compatible metadata source;
+   - choose the metadata source you want to enrich catalogs with;
    - adjust refresh cadence, cache duration, and item counts per lane;
    - trigger an immediate regeneration and check profile status.
 4. **Install in Stremio** – once the status indicator shows healthy catalogs, add the manifest URL
@@ -103,7 +103,7 @@ below lists the most relevant options:
 | Setting | Default | Purpose |
 |---|---|---|
 | `OPENROUTER_API_KEY` | – | API key used for catalog generation. Required unless supplied per profile via `/config`. |
-| `OPENROUTER_MODEL` | `google/gemini-2.5-flash-lite` | Default model requested from OpenRouter. |
+| `OPENROUTER_MODEL` | – | Model identifier requested from OpenRouter (configurable per profile). |
 | `TRAKT_CLIENT_ID` / `TRAKT_CLIENT_SECRET` | – | Credentials needed for device authentication from the config UI. |
 | `TRAKT_ACCESS_TOKEN` | – | Optional long-lived token if you prefer to preconfigure the profile without using the UI. |
 | `TRAKT_HISTORY_LIMIT` | `1000` | Maximum Trakt history items stored for exclusions (10–2000). |
@@ -111,7 +111,7 @@ below lists the most relevant options:
 | `GENERATION_RETRY_LIMIT` | `3` | Extra attempts allowed when lanes return too few results. |
 | `REFRESH_INTERVAL` | `43200` (12h) | How often the background worker re-generates catalogs per profile. |
 | `CACHE_TTL` | `1800` (30m) | How long catalog responses stay cached before expiring. |
-| `METADATA_ADDON_URL` | – | Base URL for a Cinemeta-compatible metadata source used to enrich items. |
+| `METADATA_ADDON_URL` | – | Base URL for the Stremio-compatible metadata source used to enrich items. |
 | `DATABASE_URL` | `sqlite+aiosqlite:///./aiopicks.db` | Location of the SQLite database that stores profiles and catalogs. |
 | `APP_NAME` | `AIOPicks` | Display name surfaced in the manifest and config UI. |
 
