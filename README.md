@@ -3,7 +3,7 @@
 <p align="center">
   <strong>AI-personalised discovery rows for your Stremio library.</strong><br />
   AIOPicks turns your Trakt history into a rotating set of themed catalogs powered by
-  OpenRouter-hosted large language models.
+  large language models accessed via OpenRouter's routing network.
 </p>
 
 ---
@@ -66,7 +66,8 @@ while the lane identities remain consistent, making the add-on easy to browse in
   for each profile, and the service keeps track of how many movies and shows are available for
   exclusion on every refresh.
 - **OpenRouter orchestration** – Each lane request uses structured prompts, retry controls, and
-  deterministic seeds to keep results grounded yet surprising.
+  deterministic seeds while OpenRouter routes the call to partner-hosted models through its
+  unified API.
 - **Metadata bridging** – Connect the add-on to whichever Stremio-compatible metadata service you
   prefer so returned catalogs include posters, backdrops, and ID fields Stremio understands.
 - **Profile persistence** – Configuration overrides, AI seeds, and generated catalogs are stored
