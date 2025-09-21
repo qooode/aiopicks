@@ -111,7 +111,7 @@ below lists the most relevant options:
 | `CATALOG_ITEM_COUNT` | `8` | Number of items the AI should return for each lane. |
 | `GENERATION_RETRY_LIMIT` | `3` | Extra attempts allowed when lanes return too few results. |
 | `REFRESH_INTERVAL` | `43200` (12h) | How often the background worker re-generates catalogs per profile. |
-| `CACHE_TTL` | `1800` (30m) | How long catalog responses stay cached before expiring. |
+| `CACHE_TTL` | `1800` (30m) | How long Stremio reuses the last catalog response before asking the server again. (Catalogs still regenerate on the `REFRESH_INTERVAL` schedule.) |
 | `METADATA_ADDON_URL` | – | Base URL for the Stremio-compatible metadata source used to enrich items. |
 | `DATABASE_URL` | `sqlite+aiosqlite:///./aiopicks.db` | Location of the SQLite database that stores profiles and catalogs. |
 | `APP_NAME` | `AIOPicks` | Display name surfaced in the manifest and config UI. |
