@@ -62,6 +62,14 @@ class ManifestConfig(BaseModel):
             "catalogItems", "catalogItemCount", "itemsPerCatalog"
         ),
     )
+    generation_retry_limit: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        validation_alias=AliasChoices(
+            "generationRetries", "retryLimit", "maxRetries"
+        ),
+    )
     refresh_interval: int | None = Field(
         default=None,
         ge=3_600,
@@ -110,6 +118,7 @@ class ManifestConfig(BaseModel):
 
     @field_validator(
         "catalog_item_count",
+        "generation_retry_limit",
         "refresh_interval",
         "response_cache",
         "trakt_history_limit",
@@ -156,6 +165,7 @@ class ProfileState:
     trakt_client_id: str | None
     trakt_access_token: str | None
     catalog_item_count: int
+    generation_retry_limit: int
     refresh_interval_seconds: int
     response_cache_seconds: int
     trakt_history_limit: int
@@ -198,6 +208,7 @@ class ProfileStatus:
             "profileId": self.state.id,
             "openrouterModel": self.state.openrouter_model,
             "catalogItemCount": self.state.catalog_item_count,
+            "generationRetryLimit": self.state.generation_retry_limit,
             "refreshIntervalSeconds": self.state.refresh_interval_seconds,
             "responseCacheSeconds": self.state.response_cache_seconds,
             "metadataAddon": self.state.metadata_addon_url,
@@ -486,6 +497,7 @@ class CatalogService:
                 api_key=state.openrouter_api_key,
                 model=state.openrouter_model,
                 exclusions=exclusion_payload,
+                retry_limit=state.generation_retry_limit,
             )
             catalogs = self._bundle_to_dict(bundle)
             await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
@@ -588,6 +600,11 @@ class CatalogService:
             trakt_access_token=profile.trakt_access_token,
             catalog_item_count=getattr(
                 profile, "catalog_item_count", self._settings.catalog_item_count
+            ),
+            generation_retry_limit=getattr(
+                profile,
+                "generation_retry_limit",
+                self._settings.generation_retry_limit,
             ),
             refresh_interval_seconds=profile.refresh_interval_seconds,
             response_cache_seconds=profile.response_cache_seconds,
@@ -974,6 +991,11 @@ class CatalogService:
                         config.catalog_item_count
                         or self._settings.catalog_item_count
                     ),
+                    generation_retry_limit=(
+                        config.generation_retry_limit
+                        if config.generation_retry_limit is not None
+                        else self._settings.generation_retry_limit
+                    ),
                     refresh_interval_seconds=config.refresh_interval or self._settings.refresh_interval_seconds,
                     response_cache_seconds=config.response_cache or self._settings.response_cache_seconds,
                     trakt_client_id=config.trakt_client_id or self._settings.trakt_client_id,
@@ -1011,6 +1033,13 @@ class CatalogService:
                     )
                 ):
                     profile.catalog_item_count = config.catalog_item_count
+                    refresh_required = True
+                if (
+                    config.generation_retry_limit is not None
+                    and config.generation_retry_limit
+                    != getattr(profile, "generation_retry_limit", None)
+                ):
+                    profile.generation_retry_limit = config.generation_retry_limit
                     refresh_required = True
                 if config.refresh_interval and config.refresh_interval != profile.refresh_interval_seconds:
                     profile.refresh_interval_seconds = config.refresh_interval
@@ -1177,6 +1206,7 @@ class CatalogService:
                     trakt_history_limit=self._settings.trakt_history_limit,
                     catalog_count=self._settings.catalog_count,
                     catalog_item_count=self._settings.catalog_item_count,
+                    generation_retry_limit=self._settings.generation_retry_limit,
                     refresh_interval_seconds=self._settings.refresh_interval_seconds,
                     response_cache_seconds=self._settings.response_cache_seconds,
                     metadata_addon_url=self._default_metadata_addon_url,
@@ -1199,6 +1229,12 @@ class CatalogService:
                     updated = True
                 if getattr(profile, "catalog_item_count", None) != self._settings.catalog_item_count:
                     profile.catalog_item_count = self._settings.catalog_item_count
+                    updated = True
+                if (
+                    getattr(profile, "generation_retry_limit", None)
+                    != self._settings.generation_retry_limit
+                ):
+                    profile.generation_retry_limit = self._settings.generation_retry_limit
                     updated = True
                 if profile.refresh_interval_seconds != self._settings.refresh_interval_seconds:
                     profile.refresh_interval_seconds = self._settings.refresh_interval_seconds

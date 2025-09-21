@@ -53,6 +53,10 @@ class Settings(BaseSettings):
         default=1_800, alias="CACHE_TTL", ge=300
     )
 
+    generation_retry_limit: int = Field(
+        default=3, alias="GENERATION_RETRY_LIMIT", ge=0, le=10
+    )
+
     trakt_api_url: HttpUrl = Field(
         default="https://api.trakt.tv", alias="TRAKT_API_URL"
     )

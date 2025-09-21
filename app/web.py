@@ -344,6 +344,10 @@ CONFIG_TEMPLATE = dedent(
                     <input id="config-catalog-items" type="range" min="4" max="100" step="1" />
                 </div>
                 <div class="field">
+                    <label for="config-generation-retries">Retry budget <span class="helper">Extra AI passes if repeats slip in</span> <span class="range-value" id="generation-retries-value"></span></label>
+                    <input id="config-generation-retries" type="range" min="0" max="10" step="1" />
+                </div>
+                <div class="field">
                     <label for="config-history-limit">History depth <span class="helper">How many recent plays to filter duplicates</span> <span class="range-value" id="history-limit-value"></span></label>
                     <input id="config-history-limit" type="range" min="100" max="2000" step="50" />
                 </div>
@@ -389,6 +393,8 @@ CONFIG_TEMPLATE = dedent(
             const metadataAddonInput = document.getElementById('config-metadata-addon');
             const catalogItemsSlider = document.getElementById('config-catalog-items');
             const catalogItemsValue = document.getElementById('catalog-items-value');
+            const generationRetriesSlider = document.getElementById('config-generation-retries');
+            const generationRetriesValue = document.getElementById('generation-retries-value');
             const historySlider = document.getElementById('config-history-limit');
             const historyValue = document.getElementById('history-limit-value');
             const refreshSelect = document.getElementById('config-refresh-interval');
@@ -423,6 +429,7 @@ CONFIG_TEMPLATE = dedent(
             let traktPending = false;
             let copyTimeout = null;
             let historyLimitTouched = false;
+            let generationRetriesTouched = false;
             let preparePending = false;
             let profileStatus = null;
             let statusPollTimer = null;
@@ -509,6 +516,12 @@ CONFIG_TEMPLATE = dedent(
             const defaultCatalogItems = defaults.catalogItemCount || catalogItemsSlider.min || 4;
             catalogItemsSlider.value = defaultCatalogItems;
             catalogItemsValue.textContent = catalogItemsSlider.value;
+            const defaultRetryLimit =
+                typeof defaults.generationRetryLimit === 'number'
+                    ? defaults.generationRetryLimit
+                    : Number(generationRetriesSlider.value || 3);
+            generationRetriesSlider.value = String(defaultRetryLimit);
+            generationRetriesValue.textContent = generationRetriesSlider.value;
             const resolvedHistoryLimit =
                 defaults.traktHistoryLimit || historySlider.value || historySlider.max || 1000;
             historySlider.value = resolvedHistoryLimit;
@@ -539,6 +552,12 @@ CONFIG_TEMPLATE = dedent(
 
             catalogItemsSlider.addEventListener('input', () => {
                 catalogItemsValue.textContent = catalogItemsSlider.value;
+                markProfileDirty();
+                updateManifestPreview();
+            });
+            generationRetriesSlider.addEventListener('input', () => {
+                generationRetriesTouched = true;
+                generationRetriesValue.textContent = generationRetriesSlider.value;
                 markProfileDirty();
                 updateManifestPreview();
             });
@@ -859,6 +878,7 @@ CONFIG_TEMPLATE = dedent(
                 }
                 persistProfileId(profileId);
                 const historyLimit = Number(raw.traktHistoryLimit);
+                const retryLimit = Number(raw.generationRetryLimit);
                 const historyRaw = raw.traktHistory && typeof raw.traktHistory === 'object' ? raw.traktHistory : {};
                 const normaliseCount = (value) => {
                     const numeric = Number(value);
@@ -934,6 +954,7 @@ CONFIG_TEMPLATE = dedent(
                     metadataAddon: typeof raw.metadataAddon === 'string'
                         ? raw.metadataAddon.trim()
                         : '',
+                    generationRetryLimit: Number.isFinite(retryLimit) && retryLimit >= 0 ? retryLimit : 0,
                     traktHistoryLimit: Number.isFinite(historyLimit) && historyLimit > 0 ? historyLimit : 0,
                     traktHistory: history,
                 };
@@ -945,6 +966,7 @@ CONFIG_TEMPLATE = dedent(
                     openrouterModel: openrouterModel.value.trim(),
                     metadataAddon: metadataAddonInput.value.trim(),
                     catalogItems: catalogItemsSlider.value,
+                    generationRetries: generationRetriesSlider.value,
                     traktHistoryLimit: historySlider.value,
                     refreshInterval: refreshSelect.value,
                     cacheTtl: cacheSelect.value,
@@ -965,6 +987,12 @@ CONFIG_TEMPLATE = dedent(
                 if (settings.openrouterKey) payload.openrouterKey = settings.openrouterKey;
                 if (settings.openrouterModel) payload.openrouterModel = settings.openrouterModel;
                 if (settings.catalogItems) payload.catalogItems = Number(settings.catalogItems);
+                if (settings.generationRetries !== undefined) {
+                    const retries = Number(settings.generationRetries);
+                    if (Number.isFinite(retries)) {
+                        payload.generationRetries = retries;
+                    }
+                }
                 if (settings.traktHistoryLimit) {
                     payload.traktHistoryLimit = Number(settings.traktHistoryLimit);
                 }
@@ -1026,6 +1054,7 @@ CONFIG_TEMPLATE = dedent(
                     }
                     profileStatus = normalized;
                     syncHistoryLimitFromStatus();
+                    syncGenerationRetriesFromStatus();
                     updateManifestPreview();
                     updateManifestUi();
                     updateManifestStatus();
@@ -1067,6 +1096,7 @@ CONFIG_TEMPLATE = dedent(
                     }
                     profileStatus = normalized;
                     syncHistoryLimitFromStatus();
+                    syncGenerationRetriesFromStatus();
                     updateManifestPreview();
                     updateManifestUi();
                     updateManifestStatus();
@@ -1096,6 +1126,7 @@ CONFIG_TEMPLATE = dedent(
                     'openrouterModel',
                     'metadataAddon',
                     'catalogItems',
+                    'generationRetries',
                     'traktHistoryLimit',
                     'refreshInterval',
                     'cacheTtl',
@@ -1139,6 +1170,25 @@ CONFIG_TEMPLATE = dedent(
                     historySlider.value = String(limit);
                 }
                 historyValue.textContent = formatHistoryLimit(limit);
+            }
+
+            function syncGenerationRetriesFromStatus() {
+                if (!profileStatus) {
+                    return;
+                }
+                const limit = Number(profileStatus.generationRetryLimit);
+                if (!Number.isFinite(limit) || limit < 0) {
+                    return;
+                }
+                const currentValue = Number(generationRetriesSlider.value);
+                if (generationRetriesTouched && currentValue !== limit) {
+                    return;
+                }
+                generationRetriesTouched = false;
+                if (currentValue !== limit) {
+                    generationRetriesSlider.value = String(limit);
+                }
+                generationRetriesValue.textContent = generationRetriesSlider.value;
             }
 
             async function copyToClipboard(value) {
@@ -1441,6 +1491,7 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
         "manifestName": settings.app_name,
         "openrouterModel": settings.openrouter_model,
         "catalogItemCount": settings.catalog_item_count,
+        "generationRetryLimit": settings.generation_retry_limit,
         "traktHistoryLimit": settings.trakt_history_limit,
         "refreshIntervalSeconds": settings.refresh_interval_seconds,
         "responseCacheSeconds": settings.response_cache_seconds,
