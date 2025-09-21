@@ -349,7 +349,7 @@ CONFIG_TEMPLATE = dedent(
                 </div>
                 <div class="field">
                     <label for="config-history-limit">History depth <span class="helper">How many recent plays to filter duplicates</span> <span class="range-value" id="history-limit-value"></span></label>
-                    <input id="config-history-limit" type="range" min="100" max="2000" step="50" />
+                    <input id="config-history-limit" type="range" min="100" max="10000" step="50" />
                 </div>
                 <div class="field">
                     <label for="config-refresh-interval">Refresh cadence <span class="helper">How often the AI rethinks the catalogs</span></label>
