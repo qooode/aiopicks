@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Sequence
 
 import httpx
 from pydantic import ValidationError
@@ -76,6 +76,7 @@ class OpenRouterClient:
         model: str | None = None,
         exclusions: dict[str, dict[str, Any]] | None = None,
         retry_limit: int | None = None,
+        catalog_definitions: Sequence[StableCatalogDefinition] | None = None,
     ) -> CatalogBundle:
         """Generate new catalogs using the configured model."""
 
@@ -96,7 +97,10 @@ class OpenRouterClient:
             except (TypeError, ValueError):
                 resolved_retry_limit = self._settings.generation_retry_limit
         resolved_retry_limit = max(0, min(resolved_retry_limit, 10))
-        definitions = self._settings.catalog_definitions
+        if catalog_definitions:
+            definitions = tuple(catalog_definitions)
+        else:
+            definitions = self._settings.catalog_definitions
         tasks = [
             asyncio.create_task(
                 self._generate_catalog_for_definition(
