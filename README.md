@@ -2,20 +2,20 @@
 
 <p align="center">
   <strong>AI-personalised Stremio discovery built from your Trakt history.</strong><br />
-  AIOPicks keeps a curated set of streaming lanes filled with fresh picks from OpenRouter's <code>google/gemini-2.5-flash-lite</code> model.
+  AIOPicks keeps a curated set of streaming lanes filled with fresh picks generated through OpenRouter.
 </p>
 
 ---
 
 ## ✨ What is AIOPicks?
 
-AIOPicks is a FastAPI add-on for Stremio that turns your own viewing footprint into a living discovery feed. On every refresh the service summarises your Trakt history, asks Gemini for new titles that match each lane, enriches the results with metadata, and serves them as standard Stremio catalogs. The catalogs stay consistent—only the items rotate—so you can pin them on the Stremio home screen without surprises.
+AIOPicks is a FastAPI service for Stremio that turns your own viewing footprint into a living discovery feed. On every refresh the service summarises your Trakt history, requests new titles from an OpenRouter-powered generator that match each lane, enriches the results with metadata, and serves them as standard Stremio catalogs. The catalogs stay consistent—only the items rotate—so you can pin them on the Stremio home screen without surprises.
 
-Behind the scenes the add-on stores catalog payloads in SQLite (or any SQLAlchemy-compatible database you point it at) and refreshes them on a schedule. If the AI call fails it falls back to "recently loved" history mixes, so your catalogs never disappear.
+Behind the scenes the service stores catalog payloads in SQLite (or any SQLAlchemy-compatible database you point it at) and refreshes them on a schedule. If the AI call fails it falls back to "recently loved" history mixes, so your catalogs never disappear.
 
 ## 🎬 Current catalog line-up
 
-AIOPicks currently generates 17 fixed lanes. Movies and series are requested separately so Stremio can merge in rich metadata from Cinemeta or another add-on you configure.
+AIOPicks currently generates 17 fixed lanes. Movies and series are requested separately so Stremio can merge in rich metadata from Cinemeta or another compatible service you configure.
 
 | Lane | Type | What the AI looks for |
 |------|------|-----------------------|
@@ -41,16 +41,16 @@ AIOPicks currently generates 17 fixed lanes. Movies and series are requested sep
 
 1. **Trakt ingestion** – The service pulls your configured amount of movie and series history (up to 2,000 entries each) together with statistics that help the UI surface watch-time totals.
 2. **Taste summary** – AIOPicks builds prompts summarising your favourite genres, people, and recent standouts while passing fingerprints of everything you have already logged so repeats can be filtered out.
-3. **Gemini generation** – Each lane is requested in parallel from `google/gemini-2.5-flash-lite` via OpenRouter, seeded with a random token so results rotate between refreshes while keeping the lane title stable.
-4. **Metadata enrichment** – When a Cinemeta-compatible metadata add-on URL is configured, missing posters, backgrounds, IDs, and release years are filled in before storing the catalogs.
+3. **AI generation** – Each lane is requested in parallel through OpenRouter, seeded with a random token so results rotate between refreshes while keeping the lane title stable.
+4. **Metadata enrichment** – When a Cinemeta-compatible metadata service URL is configured, missing posters, backgrounds, IDs, and release years are filled in before storing the catalogs.
 5. **Persistence & refresh** – Catalogs are written to the database and served straight from storage. Background jobs refresh them according to your configured interval, and `/api/profile/prepare` can be called (or triggered from the config UI) to force a rebuild.
-6. **Graceful fallback** – If Gemini cannot be reached, history-based mixes keep your catalogs populated until the next successful refresh.
+6. **Graceful fallback** – If the discovery engine cannot be reached, history-based mixes keep your catalogs populated until the next successful refresh.
 
 ## 🚀 Feature highlights
 
 - **Stable discovery lanes** – A fixed manifest of 17 catalogs keeps Stremio shelves predictable while still rotating the items inside each lane.
-- **OpenRouter + Trakt intelligence** – Gemini receives rich context including genre/people counters and a deduplication index so it can recommend true first-time watches.
-- **Metadata bridge** – Optional lookups against Cinemeta (or any compatible add-on) fill in posters, backgrounds, and canonical IDs for cleaner Stremio grids.
+- **OpenRouter + Trakt intelligence** – The AI receives rich context including genre/people counters and a deduplication index so it can recommend true first-time watches.
+- **Metadata bridge** – Optional lookups against Cinemeta (or any compatible service) fill in posters, backgrounds, and canonical IDs for cleaner Stremio grids.
 - **Profile-aware config** – Manifest parameters, refresh cadence, and overrides are stored per profile in the database, and the `/config` UI lets you trigger refreshes, sign into Trakt, and copy ready-to-use manifest URLs.
 - **Resilient caching** – Catalogs persist in SQLite by default and survive restarts; background refreshes can be forced via API or will run automatically on the interval you specify.
 
@@ -58,7 +58,7 @@ AIOPicks currently generates 17 fixed lanes. Movies and series are requested sep
 
 - Python 3.10+
 - A Trakt application (client ID/secret) and an access token with history scope
-- An OpenRouter API key with access to `google/gemini-2.5-flash-lite`
+- An OpenRouter API key
 - (Recommended) A Cinemeta-compatible metadata endpoint, e.g. `https://v3-cinemeta.strem.io`
 - (Optional) Docker if you prefer container deployment
 
@@ -74,8 +74,8 @@ AIOPicks currently generates 17 fixed lanes. Movies and series are requested sep
    - `CATALOG_ITEM_COUNT` (items per lane, default `8`)
    - `REFRESH_INTERVAL` (seconds between automatic refreshes, default `43200`)
    - `CACHE_TTL` (how long cached catalog responses stay valid, default `1800`)
-   - `GENERATION_RETRY_LIMIT` (extra Gemini attempts if a lane comes back short)
-   - `METADATA_ADDON_URL` (Cinemeta or another metadata add-on; omit `/manifest.json`)
+   - `GENERATION_RETRY_LIMIT` (extra AI attempts if a lane comes back short)
+   - `METADATA_ADDON_URL` (Cinemeta or another metadata service; omit `/manifest.json`)
    - `DATABASE_URL` (SQLAlchemy URL; defaults to `sqlite+aiosqlite:///./aiopicks.db`)
 
 Open `http://localhost:3000/config` after the server starts to:
@@ -95,7 +95,7 @@ cp .env.sample .env  # update with your keys
 uvicorn app.main:app --reload --port 3000
 ```
 
-Visit `http://localhost:3000/manifest.json` to confirm the add-on is live and the manifest lists all 17 catalogs. Install that URL in Stremio once your profile shows as "Ready" on the config page.
+Visit `http://localhost:3000/manifest.json` to confirm the service is live and the manifest lists all 17 catalogs. Install that URL in Stremio once your profile shows as "Ready" on the config page.
 
 ### Running tests
 
@@ -129,9 +129,9 @@ docker run -d \
 
 - **FastAPI application** (`app/main.py`) wires HTTP routes, OAuth helpers, and the background refresh lifecycle.
 - **Catalog service** (`app/services/catalog_generator.py`) orchestrates Trakt ingestion, AI prompting, metadata enrichment, caching, and persistence.
-- **OpenRouter client** (`app/services/openrouter.py`) formats prompts and manages per-lane retries against Gemini.
+- **OpenRouter client** (`app/services/openrouter.py`) formats prompts and manages per-lane retries against the configured AI engine.
 - **Trakt client** (`app/services/trakt.py`) fetches history batches and statistics used to build prompts and UI summaries.
-- **Metadata bridge** (`app/services/metadata_addon.py`) talks to Cinemeta-compatible add-ons to fill in artwork and IDs.
+- **Metadata bridge** (`app/services/metadata_addon.py`) talks to Cinemeta-compatible services to fill in artwork and IDs.
 - **Database layer** (`app/database.py`, `app/db_models.py`) persists profiles, catalog payloads, and refresh bookkeeping using SQLAlchemy async sessions.
 
 ## 📡 API surface
