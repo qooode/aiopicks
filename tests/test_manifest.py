@@ -55,6 +55,23 @@ def test_manifest_allows_path_overrides() -> None:
     assert response.status_code == 200
     assert service.last_config is not None
     assert service.last_config.catalog_item_count == 9
+    assert service.last_config.catalog_keys is None
+
+
+def test_manifest_allows_catalog_key_overrides() -> None:
+    app = FastAPI()
+    register_routes(app)
+    service = DummyCatalogService()
+    app.state.catalog_service = service
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/manifest/catalogKeys/movies-for-you%2Cseries-for-you/manifest.json"
+        )
+
+    assert response.status_code == 200
+    assert service.last_config is not None
+    assert service.last_config.catalog_keys == ("movies-for-you", "series-for-you")
 
 
 def test_manifest_allows_retry_override() -> None:

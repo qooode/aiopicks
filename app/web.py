@@ -7,6 +7,7 @@ from textwrap import dedent
 from urllib.parse import urlparse
 
 from .config import Settings
+from .stable_catalogs import STABLE_CATALOGS
 
 
 CONFIG_TEMPLATE = dedent(
@@ -103,6 +104,59 @@ CONFIG_TEMPLATE = dedent(
             font-weight: 400;
             font-size: 0.85rem;
             color: var(--text-muted);
+        }
+        .catalog-options {
+            display: grid;
+            gap: 0.65rem;
+        }
+        .catalog-option {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0.75rem;
+            padding: 0.85rem 1rem;
+            border-radius: 14px;
+            background: var(--surface-muted);
+            border: 1px solid var(--outline);
+            transition: border 0.2s ease, background 0.2s ease;
+        }
+        .catalog-option input[type="checkbox"] {
+            margin-top: 0.35rem;
+        }
+        .catalog-option.checked {
+            border-color: var(--outline-strong);
+            background: var(--surface-strong);
+        }
+        .catalog-option .catalog-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+        .catalog-option .catalog-header {
+            display: flex;
+            align-items: baseline;
+            gap: 0.5rem;
+        }
+        .catalog-option .catalog-info h3 {
+            margin: 0;
+            font-size: 1rem;
+            letter-spacing: -0.01em;
+        }
+        .catalog-option .catalog-info p {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+        .catalog-option .catalog-badge {
+            padding: 0.15rem 0.5rem;
+            border-radius: 999px;
+            border: 1px solid var(--outline);
+            font-size: 0.7rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+        .catalog-selection-warning {
+            color: #ffb3b3;
         }
         input[type="text"],
         select {
@@ -339,6 +393,11 @@ CONFIG_TEMPLATE = dedent(
                     <label for="config-metadata-addon">Metadata add-on URL <span class="helper">Optional – used to fetch posters and IDs</span></label>
                     <input id="config-metadata-addon" type="text" placeholder="https://example-addon.strem.fun" inputmode="url" spellcheck="false" />
                 </div>
+                <div class="field" id="catalog-selection-field">
+                    <label>Catalog lanes <span class="helper">Pick the collections to generate</span></label>
+                    <div class="catalog-options" id="catalog-options"></div>
+                    <p class="muted" id="catalog-selection-hint"></p>
+                </div>
                 <div class="field">
                     <label for="config-catalog-items">Items per catalog <span class="range-value" id="catalog-items-value"></span></label>
                     <input id="config-catalog-items" type="range" min="4" max="100" step="1" />
@@ -408,6 +467,26 @@ CONFIG_TEMPLATE = dedent(
             const copyMessage = document.getElementById('copy-message');
             const manifestStatus = document.getElementById('manifest-status');
             const manifestLock = document.getElementById('manifest-lock');
+            const catalogOptionsContainer = document.getElementById('catalog-options');
+            const catalogSelectionHint = document.getElementById('catalog-selection-hint');
+
+            const availableCatalogsRaw = Array.isArray(defaults.availableCatalogs)
+                ? defaults.availableCatalogs
+                : [];
+            const availableCatalogs = availableCatalogsRaw
+                .map((catalog) => (catalog && typeof catalog === 'object' ? catalog : null))
+                .filter((catalog) => catalog && typeof catalog.key === 'string');
+            const catalogKeyLookup = new Map();
+            availableCatalogs.forEach((catalog) => {
+                const key = String(catalog.key || '').trim();
+                if (!key) {
+                    return;
+                }
+                catalogKeyLookup.set(key.toLowerCase(), key);
+            });
+            const catalogOrder = availableCatalogs.map((catalog) => catalog.key);
+            const catalogOptionElements = new Map();
+            const catalogSelection = new Set();
 
             const traktLoginButton = document.getElementById('trakt-login');
             const traktDisconnectButton = document.getElementById('trakt-disconnect');
@@ -430,6 +509,7 @@ CONFIG_TEMPLATE = dedent(
             let copyTimeout = null;
             let historyLimitTouched = false;
             let generationRetriesTouched = false;
+            let catalogSelectionTouched = false;
             let preparePending = false;
             let profileStatus = null;
             let statusPollTimer = null;
@@ -492,6 +572,166 @@ CONFIG_TEMPLATE = dedent(
                 return `${prefix}${suffix}`;
             }
 
+            function normaliseCatalogKeyList(value) {
+                if (!value) {
+                    return [];
+                }
+                const rawList = Array.isArray(value) ? value : String(value).split(',');
+                const seen = new Set();
+                const result = [];
+                rawList.forEach((entry) => {
+                    if (typeof entry !== 'string') {
+                        return;
+                    }
+                    const trimmed = entry.trim();
+                    if (!trimmed) {
+                        return;
+                    }
+                    const canonical = catalogKeyLookup.get(trimmed.toLowerCase());
+                    if (!canonical || seen.has(canonical)) {
+                        return;
+                    }
+                    seen.add(canonical);
+                    result.push(canonical);
+                });
+                return result;
+            }
+
+            function reorderCatalogSelection() {
+                if (!catalogOrder.length) {
+                    return;
+                }
+                const ordered = catalogOrder.filter((key) => catalogSelection.has(key));
+                catalogSelection.clear();
+                ordered.forEach((key) => catalogSelection.add(key));
+            }
+
+            function renderCatalogOptionStates() {
+                catalogOptionElements.forEach(({ option, checkbox }, key) => {
+                    const checked = catalogSelection.has(key);
+                    checkbox.checked = checked;
+                    option.classList.toggle('checked', checked);
+                });
+            }
+
+            function updateCatalogSelectionHint() {
+                if (!catalogSelectionHint) {
+                    return;
+                }
+                const total = catalogOrder.length || catalogSelection.size;
+                const selected = catalogSelection.size;
+                if (selected === 0) {
+                    catalogSelectionHint.textContent = 'Select at least one catalog lane to generate.';
+                    catalogSelectionHint.classList.add('catalog-selection-warning');
+                    return;
+                }
+                const summary = total > 0
+                    ? `${selected} of ${total} lanes selected`
+                    : `${selected} lanes selected`;
+                catalogSelectionHint.textContent = summary;
+                catalogSelectionHint.classList.remove('catalog-selection-warning');
+            }
+
+            function renderCatalogOptions() {
+                if (!catalogOptionsContainer) {
+                    return;
+                }
+                catalogOptionsContainer.innerHTML = '';
+                catalogOptionElements.clear();
+                availableCatalogs.forEach((catalog) => {
+                    const key = catalog.key;
+                    const option = document.createElement('label');
+                    option.className = 'catalog-option';
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.value = key;
+                    checkbox.checked = catalogSelection.has(key);
+                    checkbox.addEventListener('change', () => {
+                        if (checkbox.checked) {
+                            catalogSelection.add(key);
+                        } else {
+                            catalogSelection.delete(key);
+                        }
+                        reorderCatalogSelection();
+                        catalogSelectionTouched = true;
+                        option.classList.toggle('checked', checkbox.checked);
+                        updateCatalogSelectionHint();
+                        markProfileDirty();
+                        updateManifestPreview();
+                        updateManifestUi();
+                    });
+
+                    const info = document.createElement('div');
+                    info.className = 'catalog-info';
+                    const header = document.createElement('div');
+                    header.className = 'catalog-header';
+                    const title = document.createElement('h3');
+                    title.textContent = catalog.title || key;
+                    header.appendChild(title);
+                    const badge = document.createElement('span');
+                    badge.className = 'catalog-badge';
+                    badge.textContent = catalog.contentType === 'series' ? 'Series' : 'Movies';
+                    header.appendChild(badge);
+                    info.appendChild(header);
+                    if (catalog.description) {
+                        const description = document.createElement('p');
+                        description.textContent = catalog.description;
+                        info.appendChild(description);
+                    }
+
+                    option.appendChild(checkbox);
+                    option.appendChild(info);
+                    option.classList.toggle('checked', checkbox.checked);
+                    catalogOptionsContainer.appendChild(option);
+                    catalogOptionElements.set(key, { option, checkbox });
+                });
+                renderCatalogOptionStates();
+                updateCatalogSelectionHint();
+            }
+
+            function getSelectedCatalogKeys() {
+                return Array.from(catalogSelection);
+            }
+
+            function setCatalogSelection(keys, options = {}) {
+                const normalisedKeys = normaliseCatalogKeyList(keys);
+                const fallback = normalisedKeys.length > 0 ? normalisedKeys : catalogOrder;
+                catalogSelection.clear();
+                fallback.forEach((key) => {
+                    if (catalogKeyLookup.has(String(key).toLowerCase())) {
+                        catalogSelection.add(catalogKeyLookup.get(String(key).toLowerCase()) || key);
+                    }
+                });
+                reorderCatalogSelection();
+                catalogSelectionTouched = Boolean(options.markTouched);
+                renderCatalogOptionStates();
+                updateCatalogSelectionHint();
+                if (!options.skipPreview) {
+                    updateManifestPreview();
+                }
+                updateManifestUi();
+            }
+
+            function syncCatalogSelectionFromStatus() {
+                if (!profileStatus) {
+                    return;
+                }
+                const statusKeys = normaliseCatalogKeyList(profileStatus.catalogKeys);
+                const desiredKeys = statusKeys.length > 0 ? statusKeys : normaliseCatalogKeyList(defaults.catalogKeys);
+                const currentKeys = getSelectedCatalogKeys();
+                const keysDiffer =
+                    desiredKeys.length !== currentKeys.length
+                    || desiredKeys.some((key, index) => key !== currentKeys[index]);
+                if (!keysDiffer) {
+                    catalogSelectionTouched = false;
+                    return;
+                }
+                if (catalogSelectionTouched) {
+                    return;
+                }
+                setCatalogSelection(desiredKeys);
+            }
+
             function resolveProfileId(options = {}) {
                 const { createIfMissing = false } = options;
                 if (profileStatus && profileStatus.profileId) {
@@ -530,6 +770,9 @@ CONFIG_TEMPLATE = dedent(
             ensureOption(refreshSelect, refreshSelect.value, formatSeconds(Number(refreshSelect.value)));
             cacheSelect.value = String(defaults.responseCacheSeconds || cacheSelect.value);
             ensureOption(cacheSelect, cacheSelect.value, formatSeconds(Number(cacheSelect.value)));
+
+            setCatalogSelection(defaults.catalogKeys, { skipPreview: true });
+            renderCatalogOptions();
 
             const storedTokens = readStoredTokens();
             if (storedTokens && storedTokens.access_token) {
@@ -843,7 +1086,8 @@ CONFIG_TEMPLATE = dedent(
             function updateManifestUi() {
                 const traktLocked = traktLoginAvailable && !traktAuth.accessToken;
                 const generating = preparePending || Boolean(profileStatus && profileStatus.refreshing);
-                prepareProfileButton.disabled = traktLocked || generating;
+                const hasCatalogSelection = catalogSelection.size > 0;
+                prepareProfileButton.disabled = traktLocked || generating || !hasCatalogSelection;
                 prepareProfileButton.classList.toggle('loading', generating);
                 prepareProfileButton.setAttribute('aria-busy', generating ? 'true' : 'false');
                 if (prepareSpinner) {
@@ -852,7 +1096,7 @@ CONFIG_TEMPLATE = dedent(
                 if (prepareLabel) {
                     prepareLabel.textContent = generating ? 'Generating…' : 'Generate catalogs';
                 }
-                copyConfiguredManifest.disabled = traktLocked || !isProfileReady();
+                copyConfiguredManifest.disabled = traktLocked || !isProfileReady() || !hasCatalogSelection;
                 manifestLock.classList.toggle('hidden', !traktLoginAvailable || Boolean(traktAuth.accessToken));
             }
 
@@ -954,6 +1198,7 @@ CONFIG_TEMPLATE = dedent(
                     metadataAddon: typeof raw.metadataAddon === 'string'
                         ? raw.metadataAddon.trim()
                         : '',
+                    catalogKeys: normaliseCatalogKeyList(raw.catalogKeys),
                     generationRetryLimit: Number.isFinite(retryLimit) && retryLimit >= 0 ? retryLimit : 0,
                     traktHistoryLimit: Number.isFinite(historyLimit) && historyLimit > 0 ? historyLimit : 0,
                     traktHistory: history,
@@ -965,6 +1210,7 @@ CONFIG_TEMPLATE = dedent(
                     openrouterKey: openrouterKey.value.trim(),
                     openrouterModel: openrouterModel.value.trim(),
                     metadataAddon: metadataAddonInput.value.trim(),
+                    catalogKeys: getSelectedCatalogKeys(),
                     catalogItems: catalogItemsSlider.value,
                     generationRetries: generationRetriesSlider.value,
                     traktHistoryLimit: historySlider.value,
@@ -986,6 +1232,9 @@ CONFIG_TEMPLATE = dedent(
                 }
                 if (settings.openrouterKey) payload.openrouterKey = settings.openrouterKey;
                 if (settings.openrouterModel) payload.openrouterModel = settings.openrouterModel;
+                if (Array.isArray(settings.catalogKeys) && settings.catalogKeys.length > 0) {
+                    payload.catalogKeys = settings.catalogKeys;
+                }
                 if (settings.catalogItems) payload.catalogItems = Number(settings.catalogItems);
                 if (settings.generationRetries !== undefined) {
                     const retries = Number(settings.generationRetries);
@@ -1016,6 +1265,12 @@ CONFIG_TEMPLATE = dedent(
                 if (includeConfig) {
                     const settings = collectManifestSettings();
                     Object.entries(settings).forEach(([key, value]) => {
+                        if (Array.isArray(value)) {
+                            if (value.length > 0) {
+                                params.set(key, value.join(','));
+                            }
+                            return;
+                        }
                         if (value) {
                             params.set(key, value);
                         }
@@ -1055,6 +1310,7 @@ CONFIG_TEMPLATE = dedent(
                     profileStatus = normalized;
                     syncHistoryLimitFromStatus();
                     syncGenerationRetriesFromStatus();
+                    syncCatalogSelectionFromStatus();
                     updateManifestPreview();
                     updateManifestUi();
                     updateManifestStatus();
@@ -1097,6 +1353,7 @@ CONFIG_TEMPLATE = dedent(
                     profileStatus = normalized;
                     syncHistoryLimitFromStatus();
                     syncGenerationRetriesFromStatus();
+                    syncCatalogSelectionFromStatus();
                     updateManifestPreview();
                     updateManifestUi();
                     updateManifestStatus();
@@ -1125,6 +1382,7 @@ CONFIG_TEMPLATE = dedent(
                     'openrouterKey',
                     'openrouterModel',
                     'metadataAddon',
+                    'catalogKeys',
                     'catalogItems',
                     'generationRetries',
                     'traktHistoryLimit',
@@ -1135,6 +1393,14 @@ CONFIG_TEMPLATE = dedent(
                 const segments = [];
                 manifestKeys.forEach((key) => {
                     const value = settings[key];
+                    if (Array.isArray(value)) {
+                        if (value.length === 0) {
+                            return;
+                        }
+                        segments.push(encodeURIComponent(key));
+                        segments.push(encodeURIComponent(value.join(',')));
+                        return;
+                    }
                     if (!value) {
                         return;
                     }
@@ -1486,6 +1752,16 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
                 f"{parsed.scheme}://{parsed.netloc}"
             ).rstrip("/")
 
+    catalog_options = [
+        {
+            "key": definition.key,
+            "title": definition.title,
+            "description": definition.description,
+            "contentType": definition.content_type,
+        }
+        for definition in STABLE_CATALOGS
+    ]
+
     defaults = {
         "appName": settings.app_name,
         "manifestName": settings.app_name,
@@ -1495,6 +1771,8 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
         "traktHistoryLimit": settings.trakt_history_limit,
         "refreshIntervalSeconds": settings.refresh_interval_seconds,
         "responseCacheSeconds": settings.response_cache_seconds,
+        "catalogKeys": list(settings.catalog_keys),
+        "availableCatalogs": catalog_options,
         "traktAccessToken": settings.trakt_access_token or "",
         "traktLoginAvailable": bool(
             settings.trakt_client_id and settings.trakt_client_secret
