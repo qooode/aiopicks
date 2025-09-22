@@ -1,94 +1,109 @@
 <h1 align="center">AIOPicks</h1>
 
 <p align="center">
-  <strong>AI-powered personalized recommendations for your next binge.</strong><br />
-  AIOPicks generates dynamic movie and TV show catalogs for Stremio using your Trakt history and
-  OpenRouter's <code>google/gemini-2.5-flash-lite</code> model.
+  <strong>AI-personalised Stremio discovery built from your Trakt history.</strong><br />
+  AIOPicks keeps a curated set of streaming lanes filled with fresh picks from OpenRouter's <code>google/gemini-2.5-flash-lite</code> model.
 </p>
 
 ---
 
 ## ✨ What is AIOPicks?
 
-AIOPicks is a FastAPI-powered Stremio addon that turns your Trakt watch history into AI-curated, ever-changing
-catalogs. Every refresh uses the Gemini 2.5 Flash Lite model on OpenRouter to craft brand-new themes, names, and
-recommendations so you never scroll the same rows twice.
+AIOPicks is a FastAPI add-on for Stremio that turns your own viewing footprint into a living discovery feed. On every refresh the service summarises your Trakt history, asks Gemini for new titles that match each lane, enriches the results with metadata, and serves them as standard Stremio catalogs. The catalogs stay consistent—only the items rotate—so you can pin them on the Stremio home screen without surprises.
 
-Because everything runs on your own server, your data never leaves your control. Connect your Trakt account, provide an
-OpenRouter API key, and enjoy endlessly fresh discovery playlists.
+Behind the scenes the add-on stores catalog payloads in SQLite (or any SQLAlchemy-compatible database you point it at) and refreshes them on a schedule. If the AI call fails it falls back to "recently loved" history mixes, so your catalogs never disappear.
 
-## 🚀 Key Features
+## 🎬 Current catalog line-up
 
-### 🤖 AI-Powered Personalization
-- **Trakt Integration**: Pulls your watch history (movies & series) with extended metadata
-- **OpenRouter AI**: Uses `google/gemini-2.5-flash-lite` for imaginative yet grounded catalog ideas
-- **Randomized Catalogs**: Each refresh injects a random seed so names and picks are always surprising
-- **Privacy-Focused**: All history processing and AI prompts happen on your self-hosted instance
-- **Catalog-Only Manifest**: Advertises just the catalog resource so Stremio can merge in metadata from Cinemeta or other providers you install.
+AIOPicks currently generates 17 fixed lanes. Movies and series are requested separately so Stremio can merge in rich metadata from Cinemeta or another add-on you configure.
 
-### 📊 User-Configurable Dynamic Catalogs
-AIOPicks invents themed rows with bespoke names and contents:
+| Lane | Type | What the AI looks for |
+|------|------|-----------------------|
+| Because You Watched | Series | Similar series to your recent watches, extending the moods you just binged. |
+| Your Top Genre Picks | Movie | Fresh films expanding on the genres you play most—thrillers, comedies, and more. |
+| Actors You Love | Movie | Movies headlined by the performers you return to again and again. |
+| Directors You Return To | Movie | Films from directors already in your rotation, including acclaimed deep cuts. |
+| Franchises You Started | Series | Series sequels, prequels, and spin-offs tied to universes you've begun but not finished. |
+| Hidden Gems (Last 5 Years) | Movie | Critically praised films from the past five years that align with your taste yet slipped by. |
+| Classics You Missed | Movie | 70s–90s films that fit your profile but never made it into your history. |
+| Best of the Last Decade | Movie | Standout 2010s films matching your vibe and still waiting in your queue. |
+| Seasonal Picks for You | Movie | Rotating films for the current season—holiday comfort, Halloween chills, or summer heat. |
+| International Favorites | Movie | Foreign films in your preferred genres that global fans rave about. |
+| Cult Classics in Your Taste | Movie | Famous cult films that match your sensibilities but never hit your watch history. |
+| Indie Discoveries | Movie | Independent films that mirror your taste with daring storytelling and strong buzz. |
+| Mini-Series Matches | Series | Short, high-impact limited series tuned to your favourite tones and genres. |
+| Docs You’ll Like | Movie | Feature documentaries linked to the interests—crime, sports, history—you revisit often. |
+| Animated Worlds | Series | Animated and anime series that echo the flavours you already love. |
+| Missed While Binging | Movie | Films released while you were deep into other shows—worthy catch-ups for your queue. |
+| Forgotten Favorites Expanded | Series | Series related to movies or shows you adored years ago—spiritual sequels and continuations. |
 
-- **🌙 Midnight Mystery Flights** – *Atmospheric thrillers for after dark*
-- **🎭 Seoulful Stories** – *Emotional Korean dramas aligned with your taste*
-- **🔥 Weekend Questline** – *Series primed for marathon sessions*
-- **✨ Critics' Curveballs** – *Awarded picks you somehow missed*
+## ⚙️ How it works right now
 
-### 🧰 Flexible Configuration
-- **Catalog Count**: Choose how many movie/series rows to generate (1-12)
-- **Manifest Name**: Override the add-on title shown inside Stremio without exposing model details
-- **Refresh Interval**: Control how often the AI regenerates catalogs
-- **History Depth**: Decide how many of your recent Trakt plays (up to 2,000) are used to avoid repeats
-- **Caching**: Lightweight in-memory cache keeps Stremio responses snappy between refreshes
-- **Fallbacks**: If the AI call fails, the addon gracefully falls back to history-based mixes
+1. **Trakt ingestion** – The service pulls your configured amount of movie and series history (up to 2,000 entries each) together with statistics that help the UI surface watch-time totals.
+2. **Taste summary** – AIOPicks builds prompts summarising your favourite genres, people, and recent standouts while passing fingerprints of everything you have already logged so repeats can be filtered out.
+3. **Gemini generation** – Each lane is requested in parallel from `google/gemini-2.5-flash-lite` via OpenRouter, seeded with a random token so results rotate between refreshes while keeping the lane title stable.
+4. **Metadata enrichment** – When a Cinemeta-compatible metadata add-on URL is configured, missing posters, backgrounds, IDs, and release years are filled in before storing the catalogs.
+5. **Persistence & refresh** – Catalogs are written to the database and served straight from storage. Background jobs refresh them according to your configured interval, and `/api/profile/prepare` can be called (or triggered from the config UI) to force a rebuild.
+6. **Graceful fallback** – If Gemini cannot be reached, history-based mixes keep your catalogs populated until the next successful refresh.
+
+## 🚀 Feature highlights
+
+- **Stable discovery lanes** – A fixed manifest of 17 catalogs keeps Stremio shelves predictable while still rotating the items inside each lane.
+- **OpenRouter + Trakt intelligence** – Gemini receives rich context including genre/people counters and a deduplication index so it can recommend true first-time watches.
+- **Metadata bridge** – Optional lookups against Cinemeta (or any compatible add-on) fill in posters, backgrounds, and canonical IDs for cleaner Stremio grids.
+- **Profile-aware config** – Manifest parameters, refresh cadence, and overrides are stored per profile in the database, and the `/config` UI lets you trigger refreshes, sign into Trakt, and copy ready-to-use manifest URLs.
+- **Resilient caching** – Catalogs persist in SQLite by default and survive restarts; background refreshes can be forced via API or will run automatically on the interval you specify.
 
 ## 🛠️ Prerequisites
+
 - Python 3.10+
-- A Trakt account with viewing history (OAuth device authentication recommended)
-- OpenRouter API key with access to `google/gemini-2.5-flash-lite`
+- A Trakt application (client ID/secret) and an access token with history scope
+- An OpenRouter API key with access to `google/gemini-2.5-flash-lite`
+- (Recommended) A Cinemeta-compatible metadata endpoint, e.g. `https://v3-cinemeta.strem.io`
 - (Optional) Docker if you prefer container deployment
 
-## ⚙️ Configuration
+## 🔧 Configuration
 
-Create a `.env` file (or copy `.env.sample`) with your credentials:
+1. Copy `.env.sample` to `.env` and fill in your credentials. Only the variables listed below are currently used by the application.
+2. Provide the minimum secrets:
+   - `OPENROUTER_API_KEY`
+   - `TRAKT_CLIENT_ID`, `TRAKT_CLIENT_SECRET`, and a long-lived `TRAKT_ACCESS_TOKEN`
+3. Optional but recommended settings:
+   - `OPENROUTER_MODEL` (defaults to `google/gemini-2.5-flash-lite`)
+   - `TRAKT_HISTORY_LIMIT` (default `1000`, max `2000` per type)
+   - `CATALOG_ITEM_COUNT` (items per lane, default `8`)
+   - `REFRESH_INTERVAL` (seconds between automatic refreshes, default `43200`)
+   - `CACHE_TTL` (how long cached catalog responses stay valid, default `1800`)
+   - `GENERATION_RETRY_LIMIT` (extra Gemini attempts if a lane comes back short)
+   - `METADATA_ADDON_URL` (Cinemeta or another metadata add-on; omit `/manifest.json`)
+   - `DATABASE_URL` (SQLAlchemy URL; defaults to `sqlite+aiosqlite:///./aiopicks.db`)
 
-```env
-OPENROUTER_API_KEY=your-openrouter-key
-OPENROUTER_MODEL=google/gemini-2.5-flash-lite
-TRAKT_CLIENT_ID=your-trakt-client-id
-TRAKT_CLIENT_SECRET=your-trakt-client-secret
-TRAKT_ACCESS_TOKEN=your-trakt-access-token
-# Optional: override the detected redirect URL if you proxy through a custom domain
-TRAKT_REDIRECT_URI=https://your-domain.example/api/trakt/callback
-CATALOG_COUNT=6
-REFRESH_INTERVAL=43200  # seconds
-CACHE_TTL=1800          # seconds
-```
+Open `http://localhost:3000/config` after the server starts to:
 
-> ℹ️ You can obtain a Trakt access token by creating a personal application and using the device code flow. Store the
-> long-lived access token for this addon. The `/config` helper automatically uses `TRAKT_CLIENT_ID` and
-> `TRAKT_CLIENT_SECRET` from the server environment when minting device codes—secrets never touch the browser.
+- Verify your environment configuration and profile status
+- Trigger catalog generation (`Force refresh`)
+- Launch the Trakt OAuth helper if you prefer short-lived tokens
+- Copy a manifest URL scoped to a specific profile and override set
 
-## 🧪 Local Development
+## 🧪 Local development
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
-cp .env.sample .env  # then edit with your keys
+cp .env.sample .env  # update with your keys
 uvicorn app.main:app --reload --port 3000
 ```
 
-Open `http://localhost:3000/manifest.json` to confirm the addon is running. Install the manifest URL in Stremio to see
-the AI-generated catalogs.
+Visit `http://localhost:3000/manifest.json` to confirm the add-on is live and the manifest lists all 17 catalogs. Install that URL in Stremio once your profile shows as "Ready" on the config page.
 
-### Running Tests
+### Running tests
 
 ```bash
 pytest
 ```
 
-## 🐳 Docker Quickstart
+## 🐳 Docker quickstart
 
 ### Using Docker Compose (recommended)
 
@@ -97,11 +112,7 @@ cp .env.sample .env  # then edit with your keys
 docker compose up -d --build
 ```
 
-This command builds the image, starts the `aiopicks` service, and automatically loads
-environment variables from `.env`. Visit
-`http://localhost:3000/manifest.json` to verify the addon is running. Tail
-logs with `docker compose logs -f aiopicks` and stop the stack when you are
-finished with `docker compose down`.
+This builds the image, starts the `aiopicks` service, and pulls environment variables from `.env`. Check `http://localhost:3000/config` for status, tail logs with `docker compose logs -f aiopicks`, and stop everything with `docker compose down`.
 
 ### Manual Docker commands
 
@@ -114,33 +125,34 @@ docker run -d \
   aiopicks
 ```
 
-## 🏗️ Architecture Overview
+## 🏗️ Architecture overview
 
-- **FastAPI Server** (`app/main.py`): Implements Stremio manifest and catalog endpoints (metadata endpoint remains available for debugging but is not advertised)
-- **Catalog Service** (`app/services/catalog_generator.py`): Orchestrates Trakt ingestion, AI prompting, caching, and
-  background refresh
-- **Trakt Client** (`app/services/trakt.py`): Fetches and summarizes history with optional fallbacks
-- **OpenRouter Client** (`app/services/openrouter.py`): Calls Gemini 2.5 Flash Lite with structured prompts and parses
-  the JSON response
-- **Pydantic Models** (`app/models.py`): Validates AI output and converts it into Stremio-friendly payloads
+- **FastAPI application** (`app/main.py`) wires HTTP routes, OAuth helpers, and the background refresh lifecycle.
+- **Catalog service** (`app/services/catalog_generator.py`) orchestrates Trakt ingestion, AI prompting, metadata enrichment, caching, and persistence.
+- **OpenRouter client** (`app/services/openrouter.py`) formats prompts and manages per-lane retries against Gemini.
+- **Trakt client** (`app/services/trakt.py`) fetches history batches and statistics used to build prompts and UI summaries.
+- **Metadata bridge** (`app/services/metadata_addon.py`) talks to Cinemeta-compatible add-ons to fill in artwork and IDs.
+- **Database layer** (`app/database.py`, `app/db_models.py`) persists profiles, catalog payloads, and refresh bookkeeping using SQLAlchemy async sessions.
 
-The service keeps a short-lived cache of the last generated catalogs. A background coroutine refreshes them on the
-interval you configure. If OpenRouter is unavailable, it falls back to simple mixes derived from your watch history.
+## 📡 API surface
 
-## 📦 API Surface
-
-| Endpoint | Description |
-|----------|-------------|
-| `/manifest.json` | Advertises AI-generated catalogs to Stremio (metadata comes from Cinemeta or other addons) |
-| `/catalog/{type}/{id}.json` | Returns the metas array for a specific catalog |
-| `/meta/{type}/{id}.json` | (Optional) Internal metadata endpoint for debugging |
-| `/healthz` | Lightweight readiness probe |
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/manifest.json` | GET | Returns the manifest containing the 17 catalog lanes for the resolved profile. |
+| `/catalog/{type}/{id}.json` | GET | Returns the metas array for a catalog (`type` is `movie` or `series`). |
+| `/profiles/{profile}/manifest.json` | GET | Manifest scoped to an explicit profile ID (useful for multi-user setups). |
+| `/profiles/{profile}/catalog/{type}/{id}.json` | GET | Catalog payload for a specific profile/content combination. |
+| `/config` | GET | Interactive configuration UI, including Trakt sign-in and manual refresh controls. |
+| `/api/profile/status` | GET | Inspect or resolve profile state (used by the config UI). |
+| `/api/profile/prepare` | POST | Trigger catalog generation; supports `force` and `waitForCompletion`. |
+| `/api/trakt/login-url` | POST | Start the Trakt OAuth authorisation flow for the config UI helper. |
+| `/api/trakt/callback` | GET | OAuth redirect handler that relays tokens back to the config page. |
+| `/healthz` | GET | Lightweight readiness probe. |
 
 ## ⚠️ Disclaimer
 
-AIOPicks is a discovery tool. It does not host or stream content—only suggests what to watch next based on your own
-history. Always access content through legal providers and comply with applicable laws.
+AIOPicks suggests what to watch based on your own history—it does not host or stream any content. Use legitimate sources and respect all applicable laws.
 
 ---
 
-**Built for self-hosting enthusiasts chasing endlessly fresh watchlists.**
+**Built for self-hosters who want fresh, personalised Stremio shelves without surrendering their data.**
