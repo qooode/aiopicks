@@ -83,7 +83,7 @@ class ManifestConfig(BaseModel):
     trakt_history_limit: int | None = Field(
         default=None,
         ge=10,
-        le=2000,
+        le=10_000,
         validation_alias=AliasChoices("traktHistoryLimit", "historyLimit"),
     )
     trakt_client_id: str | None = Field(

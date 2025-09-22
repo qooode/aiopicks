@@ -27,7 +27,7 @@ class Settings(BaseSettings):
         default=None, alias="TRAKT_REDIRECT_URI"
     )
     trakt_history_limit: int = Field(
-        default=1_000, alias="TRAKT_HISTORY_LIMIT", ge=10, le=2000
+        default=1_000, alias="TRAKT_HISTORY_LIMIT", ge=10, le=10_000
     )
 
     openrouter_api_key: str | None = Field(
