@@ -41,7 +41,7 @@ AIOPicks currently generates 19 fixed lanes. Movies and series are requested sep
 
 ## ⚙️ How it works right now
 
-1. **Trakt ingestion** – The service pulls your configured amount of movie and series history (up to 2,000 entries each) together with statistics that help the UI surface watch-time totals.
+1. **Trakt ingestion** – The service pulls your configured amount of movie and series history (up to 10,000 entries each) together with statistics that help the UI surface watch-time totals.
 2. **Taste summary** – AIOPicks builds prompts summarising your favourite genres, people, and recent standouts while passing fingerprints of everything you have already logged so repeats can be filtered out.
 3. **AI generation** – Each lane is requested in parallel through OpenRouter, seeded with a random token so results rotate between refreshes while keeping the lane title stable.
 4. **Metadata enrichment** – When a Cinemeta-compatible metadata service URL is configured, missing posters, backgrounds, IDs, and release years are filled in before storing the catalogs.
@@ -72,7 +72,7 @@ AIOPicks currently generates 19 fixed lanes. Movies and series are requested sep
    - `TRAKT_CLIENT_ID`, `TRAKT_CLIENT_SECRET`, and a long-lived `TRAKT_ACCESS_TOKEN`
 3. Optional but recommended settings:
    - `OPENROUTER_MODEL` (defaults to `google/gemini-2.5-flash-lite`)
-   - `TRAKT_HISTORY_LIMIT` (default `1000`, max `2000` per type)
+   - `TRAKT_HISTORY_LIMIT` (default `1000`, max `10000` per type)
    - `CATALOG_ITEM_COUNT` (items per lane, default `8`)
    - `REFRESH_INTERVAL` (seconds between automatic refreshes, default `43200`)
    - `CACHE_TTL` (how long cached catalog responses stay valid, default `1800`)
