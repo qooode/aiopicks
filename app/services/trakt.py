@@ -62,85 +62,29 @@ class TraktClient:
         resolved_access_token = access_token or self._settings.trakt_access_token
 
         if not (resolved_client_id and resolved_access_token):
-            logger.info(
-                "Trakt credentials missing, returning empty history for %s",
-                content_type,
-            )
-            return HistoryBatch(items=[], total=0, fetched=False)
-
-        try:
-            resolved_limit = int(
-                limit if limit is not None else self._settings.trakt_history_limit
-            )
-        except (TypeError, ValueError):
-            resolved_limit = self._settings.trakt_history_limit
-
-        if resolved_limit <= 0:
+            logger.info("Trakt credentials missing, returning empty history for %s", content_type)
             return HistoryBatch(items=[], total=0, fetched=False)
 
         url = f"/sync/history/{content_type}"
-        items: list[dict[str, Any]] = []
-        fetched_any = False
-        total = 0
-        page = 1
-        total_pages: int | None = None
-
-        while len(items) < resolved_limit:
-            remaining = resolved_limit - len(items)
-            page_size = min(remaining, 100)
-            params = {
-                "limit": page_size,
-                "page": page,
-                "extended": "full",
-            }
-            response = await self._client.get(
-                url,
-                headers=self._headers(
-                    client_id=resolved_client_id, access_token=resolved_access_token
-                ),
-                params=params,
-            )
-            if response.status_code >= 400:
-                logger.warning(
-                    "Failed to fetch Trakt history for %s: %s",
-                    content_type,
-                    response.text,
-                )
-                break
-            data = response.json()
-            if not isinstance(data, list):
-                logger.warning(
-                    "Unexpected Trakt response structure for %s",
-                    content_type,
-                )
-                break
-
-            if not fetched_any:
-                total = self._extract_total_count(response, fallback=len(data))
-                total_pages = self._extract_page_count(response)
-
-            fetched_any = True
-
-            if not data:
-                break
-
-            items.extend(data)
-
-            if len(data) < page_size:
-                break
-
-            if total_pages is not None and page >= total_pages:
-                break
-
-            page += 1
-
-        if not fetched_any:
+        resolved_limit = limit if limit is not None else self._settings.trakt_history_limit
+        params = {
+            "limit": resolved_limit,
+            "extended": "full",
+        }
+        response = await self._client.get(
+            url,
+            headers=self._headers(client_id=resolved_client_id, access_token=resolved_access_token),
+            params=params,
+        )
+        if response.status_code >= 400:
+            logger.warning("Failed to fetch Trakt history for %s: %s", content_type, response.text)
             return HistoryBatch(items=[], total=0, fetched=False)
-
-        if total <= 0:
-            total = len(items)
-
-        return HistoryBatch(items=items[:resolved_limit], total=total, fetched=True)
+        data = response.json()
+        if not isinstance(data, list):
+            logger.warning("Unexpected Trakt response structure for %s", content_type)
+            return HistoryBatch(items=[], total=0, fetched=False)
+        total = self._extract_total_count(response, fallback=len(data))
+        return HistoryBatch(items=data, total=total, fetched=True)
 
     async def fetch_stats(
         self,
@@ -211,17 +155,6 @@ class TraktClient:
             return int(header_value)
         except (TypeError, ValueError):
             return fallback
-
-    @staticmethod
-    def _extract_page_count(response: httpx.Response) -> int | None:
-        header_value = response.headers.get("x-pagination-page-count")
-        if not header_value:
-            return None
-        try:
-            value = int(header_value)
-        except (TypeError, ValueError):
-            return None
-        return value if value > 0 else None
 
     @staticmethod
     def summarize_history(history: list[dict[str, Any]], *, key: str) -> dict[str, Any]:

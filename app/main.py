@@ -307,14 +307,12 @@ def register_routes(fastapi_app: FastAPI) -> None:
                     cfg.openrouter_key,
                     cfg.openrouter_model,
                     cfg.catalog_item_count,
-                    cfg.catalog_keys,
                     cfg.refresh_interval,
                     cfg.response_cache,
                     cfg.trakt_history_limit,
                     cfg.trakt_client_id,
                     cfg.trakt_access_token,
                     cfg.metadata_addon_url,
-                    cfg.combine_for_you_catalogs,
                 )
             )
 
@@ -370,11 +368,6 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 metadata_url = str(config.metadata_addon_url)
                 if (state.metadata_addon_url or None) != metadata_url:
                     return True
-            if (
-                config.catalog_keys is not None
-                and tuple(state.catalog_keys) != tuple(config.catalog_keys)
-            ):
-                return True
             return False
 
         if _requires_resolution(status):

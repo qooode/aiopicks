@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import secrets
 from contextlib import suppress
@@ -31,16 +30,8 @@ from ..utils import slugify
 from .metadata_addon import MetadataAddonClient, MetadataMatch
 from .openrouter import OpenRouterClient
 from .trakt import HistoryBatch, TraktClient
-from ..stable_catalogs import STABLE_CATALOGS, StableCatalogDefinition
 
 logger = logging.getLogger(__name__)
-
-FOR_YOU_MOVIE_CATALOG_ID = "aiopicks-movie-for-you-movies"
-FOR_YOU_SERIES_CATALOG_ID = "aiopicks-series-for-you-series"
-FOR_YOU_COMBINED_TITLE = "For You"
-FOR_YOU_COMBINED_DESCRIPTION = (
-    "Alternating film and series picks tuned to what you've watched lately."
-)
 
 
 class ManifestConfig(BaseModel):
@@ -71,15 +62,6 @@ class ManifestConfig(BaseModel):
             "catalogItems", "catalogItemCount", "itemsPerCatalog"
         ),
     )
-    catalog_keys: tuple[str, ...] | None = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "catalogs",
-            "catalogKeys",
-            "catalogSelection",
-            "enabledCatalogs",
-        ),
-    )
     generation_retry_limit: int | None = Field(
         default=None,
         ge=0,
@@ -93,14 +75,6 @@ class ManifestConfig(BaseModel):
         ge=3_600,
         validation_alias=AliasChoices("refreshInterval", "refreshSeconds"),
     )
-    combine_for_you_catalogs: bool | None = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "combineForYou",
-            "combineForYouCatalog",
-            "forYouUnified",
-        ),
-    )
     response_cache: int | None = Field(
         default=None,
         ge=300,
@@ -109,7 +83,7 @@ class ManifestConfig(BaseModel):
     trakt_history_limit: int | None = Field(
         default=None,
         ge=10,
-        le=10_000,
+        le=2000,
         validation_alias=AliasChoices("traktHistoryLimit", "historyLimit"),
     )
     trakt_client_id: str | None = Field(
@@ -161,23 +135,6 @@ class ManifestConfig(BaseModel):
         except (TypeError, ValueError) as exc:
             raise ValueError("Value must be an integer") from exc
 
-    @field_validator("combine_for_you_catalogs", mode="before")
-    @classmethod
-    def _parse_optional_bool(cls, value: object) -> object:
-        if value is None or value == "":
-            return None
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return bool(value)
-        if isinstance(value, str):
-            lowered = value.strip().lower()
-            if lowered in {"1", "true", "yes", "on"}:
-                return True
-            if lowered in {"0", "false", "no", "off"}:
-                return False
-        raise ValueError("Value must be a boolean")
-
     @field_validator(
         "profile_id",
         "openrouter_key",
@@ -196,48 +153,6 @@ class ManifestConfig(BaseModel):
             stripped = value.strip()
             return stripped or None
         return value
-
-    @field_validator("catalog_keys", mode="before")
-    @classmethod
-    def _parse_catalog_keys(cls, value: object) -> object:
-        if value is None or value == "":
-            return None
-        if isinstance(value, (tuple, list, set)):
-            return tuple(value)
-        if isinstance(value, str):
-            stripped = value.strip()
-            if not stripped:
-                return None
-            if stripped.startswith("["):
-                try:
-                    parsed = json.loads(stripped)
-                except json.JSONDecodeError:
-                    parsed = None
-                if isinstance(parsed, Sequence):
-                    return tuple(parsed)
-            parts = [part.strip() for part in stripped.split(",") if part.strip()]
-            return tuple(parts) if parts else None
-        return value
-
-    @field_validator("catalog_keys")
-    @classmethod
-    def _validate_catalog_keys(
-        cls, value: tuple[str, ...] | None
-    ) -> tuple[str, ...] | None:
-        if value is None:
-            return None
-        valid_keys = {definition.key for definition in STABLE_CATALOGS}
-        resolved: list[str] = []
-        seen: set[str] = set()
-        for raw_key in value:
-            key = str(raw_key).strip().lower()
-            if not key or key not in valid_keys or key in seen:
-                continue
-            seen.add(key)
-            resolved.append(key)
-        if not resolved:
-            raise ValueError("At least one catalog must be selected")
-        return tuple(resolved)
 
 
 @dataclass
@@ -261,8 +176,6 @@ class ProfileState:
     trakt_show_history_count: int = 0
     trakt_history_refreshed_at: datetime | None = None
     trakt_history_snapshot: dict[str, Any] | None = None
-    combine_for_you_catalogs: bool = False
-    catalog_keys: tuple[str, ...] = ()
 
 
 @dataclass
@@ -311,8 +224,6 @@ class ProfileStatus:
             "needsRefresh": self.needs_refresh,
             "refreshing": self.refreshing,
             "ready": self.has_catalogs and not self.refreshing,
-            "combineForYou": self.state.combine_for_you_catalogs,
-            "catalogKeys": list(self.state.catalog_keys),
         }
 
     def _history_payload(self) -> dict[str, Any]:
@@ -373,43 +284,6 @@ class CatalogService:
             await self.ensure_catalogs(default_state, force=True)
         if self._refresh_task is None:
             self._refresh_task = asyncio.create_task(self._refresh_loop())
-
-    def _normalise_catalog_keys(
-        self, keys: Sequence[str] | None
-    ) -> tuple[str, ...]:
-        """Ensure catalog keys are valid and deduplicated."""
-
-        if not keys:
-            return tuple(self._settings.enabled_catalogs)
-        valid_keys = {definition.key for definition in STABLE_CATALOGS}
-        resolved: list[str] = []
-        seen: set[str] = set()
-        for raw_key in keys:
-            key = str(raw_key).strip().lower()
-            if not key or key not in valid_keys or key in seen:
-                continue
-            seen.add(key)
-            resolved.append(key)
-        if not resolved:
-            return tuple(self._settings.enabled_catalogs)
-        return tuple(resolved)
-
-    def _catalog_definitions_for_keys(
-        self, keys: Sequence[str] | None
-    ) -> list[StableCatalogDefinition]:
-        """Map catalog keys to their stable definitions."""
-
-        mapping = {definition.key: definition for definition in STABLE_CATALOGS}
-        if not keys:
-            return list(STABLE_CATALOGS)
-        definitions: list[StableCatalogDefinition] = []
-        for key in keys:
-            definition = mapping.get(key)
-            if definition is not None:
-                definitions.append(definition)
-        if definitions:
-            return definitions
-        return list(STABLE_CATALOGS)
 
     async def stop(self) -> None:
         """Stop the background refresh loop."""
@@ -573,14 +447,6 @@ class CatalogService:
             state.openrouter_model,
         )
 
-        catalog_definitions = self._catalog_definitions_for_keys(state.catalog_keys)
-        selected_catalog_keys = tuple(
-            definition.key for definition in catalog_definitions
-        )
-        allowed_content_types = {
-            definition.content_type for definition in catalog_definitions
-        }
-
         movie_history_batch, show_history_batch = await asyncio.gather(
             self._trakt.fetch_history(
                 "movies",
@@ -632,15 +498,9 @@ class CatalogService:
                 model=state.openrouter_model,
                 exclusions=exclusion_payload,
                 retry_limit=state.generation_retry_limit,
-                catalog_keys=selected_catalog_keys,
             )
             catalogs = self._bundle_to_dict(bundle)
             await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
-            self._reconcile_for_you_catalogs(
-                catalogs,
-                combine=state.combine_for_you_catalogs,
-                item_limit=state.catalog_item_count,
-            )
             if not (catalogs["movie"] or catalogs["series"]):
                 logger.warning(
                     "AI returned an empty catalog bundle for profile %s; falling back to history",
@@ -661,14 +521,8 @@ class CatalogService:
                 show_history,
                 seed=seed,
                 item_limit=state.catalog_item_count,
-                allowed_types=allowed_content_types,
             )
             await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
-            self._reconcile_for_you_catalogs(
-                catalogs,
-                combine=state.combine_for_you_catalogs,
-                item_limit=state.catalog_item_count,
-            )
 
         await self._store_catalogs(state, catalogs)
 
@@ -773,12 +627,6 @@ class CatalogService:
             ),
             trakt_history_snapshot=getattr(
                 profile, "trakt_history_snapshot", None
-            ),
-            combine_for_you_catalogs=bool(
-                getattr(profile, "combine_for_you_catalogs", False)
-            ),
-            catalog_keys=self._normalise_catalog_keys(
-                getattr(profile, "catalog_keys", None)
             ),
         )
 
@@ -1093,78 +941,6 @@ class CatalogService:
                     update={"items": updated_items}
                 )
 
-    def _reconcile_for_you_catalogs(
-        self,
-        catalogs: dict[str, dict[str, Catalog]],
-        *,
-        combine: bool,
-        item_limit: int,
-    ) -> None:
-        """Blend or retain the opening For You lanes based on profile preference."""
-
-        if not combine:
-            return
-
-        movie_map = catalogs.get("movie") or {}
-        series_map = catalogs.get("series") or {}
-        movie_catalog = movie_map.get(FOR_YOU_MOVIE_CATALOG_ID)
-        series_catalog = series_map.get(FOR_YOU_SERIES_CATALOG_ID)
-        if movie_catalog is None or series_catalog is None:
-            return
-
-        movie_items = list(movie_catalog.items)
-        series_items = list(series_catalog.items)
-        if not movie_items and not series_items:
-            return
-
-        target = max(int(item_limit), 0) if isinstance(item_limit, int) else 0
-        total_available = len(movie_items) + len(series_items)
-        if target <= 0:
-            total_limit = total_available
-        else:
-            total_limit = min(total_available, target * 2)
-        if total_limit <= 0:
-            return
-
-        combined: list[CatalogItem] = []
-        movie_index = 0
-        series_index = 0
-        pick_movie = len(movie_items) >= len(series_items)
-
-        while len(combined) < total_limit and (
-            movie_index < len(movie_items) or series_index < len(series_items)
-        ):
-            if pick_movie and movie_index < len(movie_items):
-                combined.append(movie_items[movie_index])
-                movie_index += 1
-            elif series_index < len(series_items):
-                combined.append(series_items[series_index])
-                series_index += 1
-            elif movie_index < len(movie_items):
-                combined.append(movie_items[movie_index])
-                movie_index += 1
-            pick_movie = not pick_movie
-
-        seed_parts = [
-            part
-            for part in (movie_catalog.seed, series_catalog.seed)
-            if isinstance(part, str) and part.strip()
-        ]
-        combined_seed = "+".join(dict.fromkeys(seed_parts)) if seed_parts else None
-        generated_at = max(movie_catalog.generated_at, series_catalog.generated_at)
-
-        updated_movie = movie_catalog.model_copy(
-            update={
-                "title": FOR_YOU_COMBINED_TITLE,
-                "description": FOR_YOU_COMBINED_DESCRIPTION,
-                "items": combined,
-                "seed": combined_seed or movie_catalog.seed,
-                "generated_at": generated_at,
-            }
-        )
-        movie_map[FOR_YOU_MOVIE_CATALOG_ID] = updated_movie
-        series_map.pop(FOR_YOU_SERIES_CATALOG_ID, None)
-
     async def _derive_profile_identity(
         self, config: ManifestConfig
     ) -> ProfileIdentity:
@@ -1195,11 +971,6 @@ class CatalogService:
             created = False
             refresh_required = False
             now = datetime.utcnow()
-            desired_catalog_keys = (
-                self._normalise_catalog_keys(config.catalog_keys)
-                if config.catalog_keys is not None
-                else None
-            )
 
             if profile is None:
                 openrouter_key = config.openrouter_key or self._settings.openrouter_api_key
@@ -1210,14 +981,12 @@ class CatalogService:
                     if config.metadata_addon_url is not None
                     else self._default_metadata_addon_url
                 )
-                catalog_keys = desired_catalog_keys or self._normalise_catalog_keys(None)
                 profile = Profile(
                     id=profile_id,
                     display_name=identity.display_name,
                     openrouter_api_key=openrouter_key,
                     openrouter_model=config.openrouter_model or self._settings.openrouter_model,
-                    catalog_count=len(catalog_keys),
-                    catalog_keys=list(catalog_keys),
+                    catalog_count=self._settings.catalog_count,
                     catalog_item_count=(
                         config.catalog_item_count
                         or self._settings.catalog_item_count
@@ -1226,11 +995,6 @@ class CatalogService:
                         config.generation_retry_limit
                         if config.generation_retry_limit is not None
                         else self._settings.generation_retry_limit
-                    ),
-                    combine_for_you_catalogs=(
-                        config.combine_for_you_catalogs
-                        if config.combine_for_you_catalogs is not None
-                        else self._settings.combine_for_you_catalogs
                     ),
                     refresh_interval_seconds=config.refresh_interval or self._settings.refresh_interval_seconds,
                     response_cache_seconds=config.response_cache or self._settings.response_cache_seconds,
@@ -1250,23 +1014,6 @@ class CatalogService:
                 created = True
                 refresh_required = True
             else:
-                current_catalog_keys = self._normalise_catalog_keys(
-                    getattr(profile, "catalog_keys", None)
-                )
-                stored_keys = list(getattr(profile, "catalog_keys", []) or [])
-                if stored_keys != list(current_catalog_keys):
-                    profile.catalog_keys = list(current_catalog_keys)
-                    if profile.catalog_count != len(current_catalog_keys):
-                        profile.catalog_count = len(current_catalog_keys)
-                        refresh_required = True
-                if (
-                    desired_catalog_keys is not None
-                    and desired_catalog_keys != current_catalog_keys
-                ):
-                    profile.catalog_keys = list(desired_catalog_keys)
-                    profile.catalog_count = len(desired_catalog_keys)
-                    current_catalog_keys = desired_catalog_keys
-                    refresh_required = True
                 if (
                     identity.display_name
                     and identity.display_name
@@ -1316,14 +1063,6 @@ class CatalogService:
                     if new_metadata_url != getattr(profile, "metadata_addon_url", None):
                         profile.metadata_addon_url = new_metadata_url
                         refresh_required = True
-                if config.combine_for_you_catalogs is not None and (
-                    bool(config.combine_for_you_catalogs)
-                    != bool(getattr(profile, "combine_for_you_catalogs", False))
-                ):
-                    profile.combine_for_you_catalogs = bool(
-                        config.combine_for_you_catalogs
-                    )
-                    refresh_required = True
                 if profile.next_refresh_at is None:
                     profile.next_refresh_at = now
                 profile.updated_at = now
@@ -1458,9 +1197,6 @@ class CatalogService:
                         "Skipping default profile creation because OPENROUTER_API_KEY is not set"
                     )
                     return
-                catalog_keys = self._normalise_catalog_keys(
-                    self._settings.enabled_catalogs
-                )
                 profile = Profile(
                     id="default",
                     openrouter_api_key=self._settings.openrouter_api_key,
@@ -1468,10 +1204,8 @@ class CatalogService:
                     trakt_client_id=self._settings.trakt_client_id,
                     trakt_access_token=self._settings.trakt_access_token,
                     trakt_history_limit=self._settings.trakt_history_limit,
-                    catalog_count=len(catalog_keys),
-                    catalog_keys=list(catalog_keys),
+                    catalog_count=self._settings.catalog_count,
                     catalog_item_count=self._settings.catalog_item_count,
-                    combine_for_you_catalogs=self._settings.combine_for_you_catalogs,
                     generation_retry_limit=self._settings.generation_retry_limit,
                     refresh_interval_seconds=self._settings.refresh_interval_seconds,
                     response_cache_seconds=self._settings.response_cache_seconds,
@@ -1484,29 +1218,14 @@ class CatalogService:
                 session.add(profile)
             else:
                 updated = False
-                current_catalog_keys = self._normalise_catalog_keys(
-                    getattr(profile, "catalog_keys", None)
-                )
-                desired_catalog_keys = self._normalise_catalog_keys(
-                    self._settings.enabled_catalogs
-                )
-                if list(getattr(profile, "catalog_keys", []) or []) != list(
-                    current_catalog_keys
-                ):
-                    profile.catalog_keys = list(current_catalog_keys)
-                    updated = True
-                if current_catalog_keys != desired_catalog_keys:
-                    profile.catalog_keys = list(desired_catalog_keys)
-                    profile.catalog_count = len(desired_catalog_keys)
-                    updated = True
-                elif profile.catalog_count != len(current_catalog_keys):
-                    profile.catalog_count = len(current_catalog_keys)
-                    updated = True
                 if not profile.openrouter_api_key and self._settings.openrouter_api_key:
                     profile.openrouter_api_key = self._settings.openrouter_api_key
                     updated = True
                 if not profile.openrouter_model:
                     profile.openrouter_model = self._settings.openrouter_model
+                    updated = True
+                if profile.catalog_count != self._settings.catalog_count:
+                    profile.catalog_count = self._settings.catalog_count
                     updated = True
                 if getattr(profile, "catalog_item_count", None) != self._settings.catalog_item_count:
                     profile.catalog_item_count = self._settings.catalog_item_count
@@ -1528,14 +1247,6 @@ class CatalogService:
                     updated = True
                 if getattr(profile, "metadata_addon_url", None) != self._default_metadata_addon_url:
                     profile.metadata_addon_url = self._default_metadata_addon_url
-                    updated = True
-                if (
-                    bool(getattr(profile, "combine_for_you_catalogs", False))
-                    != self._settings.combine_for_you_catalogs
-                ):
-                    profile.combine_for_you_catalogs = (
-                        self._settings.combine_for_you_catalogs
-                    )
                     updated = True
                 if profile.trakt_client_id != self._settings.trakt_client_id:
                     profile.trakt_client_id = self._settings.trakt_client_id
@@ -1830,14 +1541,10 @@ class CatalogService:
         *,
         seed: str,
         item_limit: int,
-        allowed_types: set[str] | None = None,
     ) -> dict[str, dict[str, Catalog]]:
         catalogs: dict[str, dict[str, Catalog]] = {"movie": {}, "series": {}}
 
-        allow_movies = allowed_types is None or "movie" in allowed_types
-        allow_series = allowed_types is None or "series" in allowed_types
-
-        if allow_movies and movie_history:
+        if movie_history:
             catalog = self._history_catalog(
                 movie_history,
                 content_type="movie",
@@ -1847,7 +1554,7 @@ class CatalogService:
             )
             catalogs["movie"][catalog.id] = catalog
 
-        if allow_series and show_history:
+        if show_history:
             catalog = self._history_catalog(
                 show_history,
                 content_type="series",
@@ -1858,20 +1565,17 @@ class CatalogService:
             catalogs["series"][catalog.id] = catalog
 
         if not catalogs["movie"] and not catalogs["series"]:
-            fallback_type = "movie"
-            if allow_series and not allow_movies:
-                fallback_type = "series"
             now = datetime.utcnow()
             stub_catalog = Catalog(
-                id=f"aiopicks-{fallback_type}-stub-{seed}",
-                type=fallback_type,
+                id=f"aiopicks-movie-stub-{seed}",
+                type="movie",
                 title="Connect Trakt to unlock personalized picks",
                 description="We need your Trakt API credentials to fetch history before calling the AI.",
                 seed=seed,
                 items=[],
                 generated_at=now,
             )
-            catalogs[fallback_type][stub_catalog.id] = stub_catalog
+            catalogs["movie"][stub_catalog.id] = stub_catalog
         return catalogs
 
     def _history_catalog(
