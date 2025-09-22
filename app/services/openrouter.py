@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from ..config import Settings
 from ..models import Catalog, CatalogBundle, CatalogItem
-from ..stable_catalogs import STABLE_CATALOGS, StableCatalogDefinition
+from ..stable_catalogs import StableCatalogDefinition
 from ..utils import extract_json_object, slugify
 
 logger = logging.getLogger(__name__)
@@ -96,6 +96,7 @@ class OpenRouterClient:
             except (TypeError, ValueError):
                 resolved_retry_limit = self._settings.generation_retry_limit
         resolved_retry_limit = max(0, min(resolved_retry_limit, 10))
+        definitions = self._settings.catalog_definitions
         tasks = [
             asyncio.create_task(
                 self._generate_catalog_for_definition(
@@ -108,14 +109,14 @@ class OpenRouterClient:
                     exclusions=(exclusion_map or {}).get(definition.content_type),
                 )
             )
-            for index, definition in enumerate(STABLE_CATALOGS)
+            for index, definition in enumerate(definitions)
         ]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
         movie_catalogs: list[Catalog] = []
         series_catalogs: list[Catalog] = []
 
-        for definition, result in zip(STABLE_CATALOGS, results):
+        for definition, result in zip(definitions, results):
             if isinstance(result, Exception):
                 logger.warning(
                     "Catalog generation failed for %s lane: %s",
