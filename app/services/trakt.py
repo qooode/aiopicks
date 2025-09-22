@@ -67,24 +67,73 @@ class TraktClient:
 
         url = f"/sync/history/{content_type}"
         resolved_limit = limit if limit is not None else self._settings.trakt_history_limit
-        params = {
-            "limit": resolved_limit,
-            "extended": "full",
-        }
-        response = await self._client.get(
-            url,
-            headers=self._headers(client_id=resolved_client_id, access_token=resolved_access_token),
-            params=params,
-        )
-        if response.status_code >= 400:
-            logger.warning("Failed to fetch Trakt history for %s: %s", content_type, response.text)
-            return HistoryBatch(items=[], total=0, fetched=False)
-        data = response.json()
-        if not isinstance(data, list):
-            logger.warning("Unexpected Trakt response structure for %s", content_type)
-            return HistoryBatch(items=[], total=0, fetched=False)
-        total = self._extract_total_count(response, fallback=len(data))
-        return HistoryBatch(items=data, total=total, fetched=True)
+        try:
+            target = int(resolved_limit)
+        except (TypeError, ValueError):
+            target = self._settings.trakt_history_limit
+        if target <= 0:
+            return HistoryBatch(items=[], total=0, fetched=True)
+
+        collected: list[dict[str, Any]] = []
+        total = 0
+        page = 1
+        max_page_size = 100
+        remaining = target
+
+        while remaining > 0:
+            page_limit = min(remaining, max_page_size)
+            params = {
+                "limit": page_limit,
+                "page": page,
+                "extended": "full",
+            }
+            response = await self._client.get(
+                url,
+                headers=self._headers(
+                    client_id=resolved_client_id, access_token=resolved_access_token
+                ),
+                params=params,
+            )
+            if response.status_code >= 400:
+                logger.warning(
+                    "Failed to fetch Trakt history for %s: %s",
+                    content_type,
+                    response.text,
+                )
+                return HistoryBatch(items=[], total=0, fetched=False)
+
+            data = response.json()
+            if not isinstance(data, list):
+                logger.warning("Unexpected Trakt response structure for %s", content_type)
+                return HistoryBatch(items=[], total=0, fetched=False)
+
+            if total == 0:
+                total = self._extract_total_count(response, fallback=len(data))
+
+            collected.extend(data)
+            received = len(data)
+            remaining -= received
+            if remaining <= 0:
+                break
+
+            if received < page_limit:
+                break
+
+            page_count_header = response.headers.get("x-pagination-page-count")
+            if page_count_header:
+                try:
+                    page_count = int(page_count_header)
+                except (TypeError, ValueError):
+                    page_count = None
+                if page_count is not None and page >= page_count:
+                    break
+
+            page += 1
+
+        if len(collected) > target:
+            collected = collected[:target]
+
+        return HistoryBatch(items=collected, total=total or len(collected), fetched=True)
 
     async def fetch_stats(
         self,
