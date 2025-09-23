@@ -321,11 +321,6 @@ CONFIG_TEMPLATE = dedent(
         .hidden {
             display: none !important;
         }
-        @media (min-width: 720px) {
-            .catalog-lane-list {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
-        }
         @keyframes spin {
             0% {
                 transform: rotate(0deg);
