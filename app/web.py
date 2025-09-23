@@ -110,11 +110,10 @@ CONFIG_TEMPLATE = dedent(
             gap: 0.75rem;
         }
         .catalog-toggle {
-            display: grid;
-            grid-template-columns: auto 1fr;
-            gap: 0.85rem;
+            display: flex;
             align-items: flex-start;
-            padding: 0.75rem 0.9rem;
+            gap: 0.6rem;
+            padding: 0.75rem 0.85rem 0.75rem 0.4rem;
             border-radius: 16px;
             border: 1px solid var(--outline);
             background: var(--surface-muted);
@@ -128,11 +127,16 @@ CONFIG_TEMPLATE = dedent(
             margin-top: 0.35rem;
             width: 1.1rem;
             height: 1.1rem;
+            flex-shrink: 0;
             accent-color: var(--accent);
         }
         .catalog-toggle .catalog-text {
             display: grid;
             gap: 0.35rem;
+            flex: 1 1 auto;
+            min-width: 0;
+            justify-items: start;
+            text-align: left;
         }
         .catalog-toggle .catalog-title {
             font-weight: 600;
