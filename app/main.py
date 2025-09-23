@@ -307,7 +307,6 @@ def register_routes(fastapi_app: FastAPI) -> None:
                     cfg.openrouter_key,
                     cfg.openrouter_model,
                     cfg.catalog_item_count,
-                    cfg.catalog_keys,
                     cfg.refresh_interval,
                     cfg.response_cache,
                     cfg.trakt_history_limit,

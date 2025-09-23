@@ -7,7 +7,6 @@ from textwrap import dedent
 from urllib.parse import urlparse
 
 from .config import Settings
-from .stable_catalogs import STABLE_CATALOGS
 
 
 CONFIG_TEMPLATE = dedent(
@@ -104,68 +103,6 @@ CONFIG_TEMPLATE = dedent(
             font-weight: 400;
             font-size: 0.85rem;
             color: var(--text-muted);
-        }
-        .catalog-toggle-grid {
-            display: grid;
-            gap: 0.75rem;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        }
-        .catalog-toggle {
-            position: relative;
-            display: block;
-            background: var(--surface-muted);
-            border: 1px solid var(--outline);
-            border-radius: 14px;
-            padding: 0.9rem;
-            cursor: pointer;
-            transition: border 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
-        }
-        .catalog-toggle:hover {
-            border-color: var(--outline-strong);
-        }
-        .catalog-toggle.active {
-            border-color: var(--accent);
-            background: rgba(255, 255, 255, 0.05);
-            box-shadow: 0 18px 32px -28px rgba(255, 255, 255, 0.5);
-        }
-        .catalog-toggle:focus-within {
-            outline: 2px solid var(--accent);
-            outline-offset: 2px;
-        }
-        .catalog-toggle input[type="checkbox"] {
-            position: absolute;
-            opacity: 0;
-            pointer-events: none;
-        }
-        .catalog-toggle .toggle-badge {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 999px;
-            padding: 0.1rem 0.6rem;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: capitalize;
-            background: var(--surface-strong);
-            color: var(--text-muted);
-            margin-bottom: 0.4rem;
-        }
-        .catalog-toggle.active .toggle-badge {
-            color: var(--accent);
-        }
-        .catalog-toggle .toggle-title {
-            font-weight: 600;
-            font-size: 0.95rem;
-            margin-bottom: 0.35rem;
-        }
-        .catalog-toggle .toggle-description {
-            margin: 0;
-            font-size: 0.85rem;
-            line-height: 1.35;
-            color: var(--text-muted);
-        }
-        .catalog-toggle-warning {
-            color: #ffb3b3;
         }
         input[type="text"],
         select {
@@ -403,11 +340,6 @@ CONFIG_TEMPLATE = dedent(
                     <input id="config-metadata-addon" type="text" placeholder="https://example-addon.strem.fun" inputmode="url" spellcheck="false" />
                 </div>
                 <div class="field">
-                    <label>Catalog lanes <span class="helper">Enable the lists you want in Stremio</span></label>
-                    <div class="catalog-toggle-grid" id="catalog-toggle-grid"></div>
-                    <p class="muted hidden catalog-toggle-warning" id="catalog-toggle-warning">Select at least one catalog lane.</p>
-                </div>
-                <div class="field">
                     <label for="config-catalog-items">Items per catalog <span class="range-value" id="catalog-items-value"></span></label>
                     <input id="config-catalog-items" type="range" min="4" max="100" step="1" />
                 </div>
@@ -467,29 +399,6 @@ CONFIG_TEMPLATE = dedent(
             const historyValue = document.getElementById('history-limit-value');
             const refreshSelect = document.getElementById('config-refresh-interval');
             const cacheSelect = document.getElementById('config-cache-ttl');
-            const catalogToggleGrid = document.getElementById('catalog-toggle-grid');
-            const catalogToggleWarning = document.getElementById('catalog-toggle-warning');
-            const catalogDefinitions = (Array.isArray(defaults.catalogDefinitions)
-                ? defaults.catalogDefinitions
-                : []
-            )
-                .map((definition) => {
-                    const key = typeof definition.key === 'string' ? definition.key.trim().toLowerCase() : '';
-                    return {
-                        key,
-                        title: typeof definition.title === 'string' ? definition.title : key,
-                        description: typeof definition.description === 'string' ? definition.description : '',
-                        contentType: definition.contentType === 'series' ? 'series' : 'movie',
-                    };
-                })
-                .filter((definition) => definition.key);
-            const catalogDefinitionMap = new Map(
-                catalogDefinitions.map((definition) => [definition.key, definition])
-            );
-            let selectedCatalogKeys = normaliseCatalogKeyList(defaults.selectedCatalogKeys);
-            if (selectedCatalogKeys.length === 0 && catalogDefinitions.length > 0) {
-                selectedCatalogKeys = catalogDefinitions.map((definition) => definition.key);
-            }
             const prepareProfileButton = document.getElementById('prepare-profile');
             const prepareSpinner = document.getElementById('prepare-spinner');
             const prepareLabel = prepareProfileButton.querySelector('.label');
@@ -499,9 +408,6 @@ CONFIG_TEMPLATE = dedent(
             const copyMessage = document.getElementById('copy-message');
             const manifestStatus = document.getElementById('manifest-status');
             const manifestLock = document.getElementById('manifest-lock');
-
-            renderCatalogToggles();
-            updateCatalogToggleWarning();
 
             const traktLoginButton = document.getElementById('trakt-login');
             const traktDisconnectButton = document.getElementById('trakt-disconnect');
@@ -584,142 +490,6 @@ CONFIG_TEMPLATE = dedent(
                 }
                 const suffix = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
                 return `${prefix}${suffix}`;
-            }
-
-            function deriveOrderedCatalogKeys(keys) {
-                const allowed = new Set();
-                if (Array.isArray(keys)) {
-                    keys.forEach((value) => {
-                        if (typeof value !== 'string') {
-                            return;
-                        }
-                        const normalized = value.trim().toLowerCase();
-                        if (!normalized) {
-                            return;
-                        }
-                        const definition = catalogDefinitionMap.get(normalized);
-                        if (definition) {
-                            allowed.add(definition.key);
-                        }
-                    });
-                }
-                const ordered = [];
-                catalogDefinitions.forEach((definition) => {
-                    if (allowed.has(definition.key)) {
-                        ordered.push(definition.key);
-                    }
-                });
-                return ordered;
-            }
-
-            function normaliseCatalogKeyList(input) {
-                if (typeof input === 'string') {
-                    return deriveOrderedCatalogKeys(
-                        input.split(',').map((value) => value.trim())
-                    );
-                }
-                if (Array.isArray(input)) {
-                    return deriveOrderedCatalogKeys(input);
-                }
-                return [];
-            }
-
-            function syncCatalogToggleUi() {
-                if (!catalogToggleGrid) {
-                    return;
-                }
-                const selectedSet = new Set(selectedCatalogKeys);
-                const labels = catalogToggleGrid.querySelectorAll('.catalog-toggle');
-                labels.forEach((label) => {
-                    const key = (label.dataset.catalogKey || '').toLowerCase();
-                    const isSelected = selectedSet.has(key);
-                    const input = label.querySelector('input[type="checkbox"]');
-                    if (input) {
-                        input.checked = isSelected;
-                    }
-                    label.classList.toggle('active', isSelected);
-                });
-            }
-
-            function updateCatalogToggleWarning() {
-                if (!catalogToggleWarning) {
-                    return;
-                }
-                const hasSelection = selectedCatalogKeys.length > 0;
-                catalogToggleWarning.classList.toggle('hidden', hasSelection);
-            }
-
-            function applyCatalogSelection(keys, options = {}) {
-                const { silent = false } = options;
-                const ordered = deriveOrderedCatalogKeys(Array.isArray(keys) ? keys : []);
-                selectedCatalogKeys = ordered;
-                syncCatalogToggleUi();
-                updateCatalogToggleWarning();
-                updateManifestPreview();
-                if (silent) {
-                    updateManifestUi();
-                    return;
-                }
-                markProfileDirty();
-            }
-
-            function handleCatalogToggle(key, enabled) {
-                if (typeof key !== 'string' || !key) {
-                    return;
-                }
-                const definition = catalogDefinitionMap.get(key.toLowerCase());
-                if (!definition) {
-                    return;
-                }
-                const selection = new Set(selectedCatalogKeys);
-                if (enabled) {
-                    selection.add(definition.key);
-                } else {
-                    selection.delete(definition.key);
-                }
-                applyCatalogSelection([...selection]);
-            }
-
-            function renderCatalogToggles() {
-                if (!catalogToggleGrid) {
-                    return;
-                }
-                catalogToggleGrid.innerHTML = '';
-                const selectedSet = new Set(selectedCatalogKeys);
-                catalogDefinitions.forEach((definition) => {
-                    const label = document.createElement('label');
-                    label.className = 'catalog-toggle';
-                    label.dataset.catalogKey = definition.key;
-
-                    const checkbox = document.createElement('input');
-                    checkbox.type = 'checkbox';
-                    checkbox.value = definition.key;
-                    checkbox.checked = selectedSet.has(definition.key);
-                    checkbox.addEventListener('change', () => {
-                        handleCatalogToggle(definition.key, checkbox.checked);
-                    });
-
-                    const badge = document.createElement('div');
-                    badge.className = 'toggle-badge';
-                    badge.textContent = definition.contentType === 'series' ? 'Series' : 'Movies';
-
-                    const title = document.createElement('div');
-                    title.className = 'toggle-title';
-                    title.textContent = definition.title;
-
-                    const description = document.createElement('p');
-                    description.className = 'toggle-description';
-                    description.textContent = definition.description;
-
-                    label.appendChild(checkbox);
-                    label.appendChild(badge);
-                    label.appendChild(title);
-                    label.appendChild(description);
-                    label.classList.toggle('active', checkbox.checked);
-
-                    catalogToggleGrid.appendChild(label);
-                });
-                updateCatalogToggleWarning();
             }
 
             function resolveProfileId(options = {}) {
@@ -1073,8 +843,7 @@ CONFIG_TEMPLATE = dedent(
             function updateManifestUi() {
                 const traktLocked = traktLoginAvailable && !traktAuth.accessToken;
                 const generating = preparePending || Boolean(profileStatus && profileStatus.refreshing);
-                const hasCatalogSelection = selectedCatalogKeys.length > 0;
-                prepareProfileButton.disabled = traktLocked || generating || !hasCatalogSelection;
+                prepareProfileButton.disabled = traktLocked || generating;
                 prepareProfileButton.classList.toggle('loading', generating);
                 prepareProfileButton.setAttribute('aria-busy', generating ? 'true' : 'false');
                 if (prepareSpinner) {
@@ -1083,8 +852,7 @@ CONFIG_TEMPLATE = dedent(
                 if (prepareLabel) {
                     prepareLabel.textContent = generating ? 'Generating…' : 'Generate catalogs';
                 }
-                copyConfiguredManifest.disabled =
-                    traktLocked || !isProfileReady() || !hasCatalogSelection;
+                copyConfiguredManifest.disabled = traktLocked || !isProfileReady();
                 manifestLock.classList.toggle('hidden', !traktLoginAvailable || Boolean(traktAuth.accessToken));
             }
 
@@ -1175,11 +943,6 @@ CONFIG_TEMPLATE = dedent(
                         history.stats = normalisedStats;
                     }
                 }
-                const normalizedCatalogKeys = normaliseCatalogKeyList(raw.catalogKeys);
-                const resolvedCatalogKeys =
-                    normalizedCatalogKeys.length > 0
-                        ? normalizedCatalogKeys
-                        : selectedCatalogKeys.slice();
                 return {
                     profileId,
                     hasCatalogs: Boolean(raw.hasCatalogs),
@@ -1191,7 +954,6 @@ CONFIG_TEMPLATE = dedent(
                     metadataAddon: typeof raw.metadataAddon === 'string'
                         ? raw.metadataAddon.trim()
                         : '',
-                    catalogKeys: resolvedCatalogKeys,
                     generationRetryLimit: Number.isFinite(retryLimit) && retryLimit >= 0 ? retryLimit : 0,
                     traktHistoryLimit: Number.isFinite(historyLimit) && historyLimit > 0 ? historyLimit : 0,
                     traktHistory: history,
@@ -1203,7 +965,6 @@ CONFIG_TEMPLATE = dedent(
                     openrouterKey: openrouterKey.value.trim(),
                     openrouterModel: openrouterModel.value.trim(),
                     metadataAddon: metadataAddonInput.value.trim(),
-                    catalogKeys: selectedCatalogKeys.slice(),
                     catalogItems: catalogItemsSlider.value,
                     generationRetries: generationRetriesSlider.value,
                     traktHistoryLimit: historySlider.value,
@@ -1225,9 +986,6 @@ CONFIG_TEMPLATE = dedent(
                 }
                 if (settings.openrouterKey) payload.openrouterKey = settings.openrouterKey;
                 if (settings.openrouterModel) payload.openrouterModel = settings.openrouterModel;
-                if (Array.isArray(settings.catalogKeys) && settings.catalogKeys.length > 0) {
-                    payload.catalogKeys = settings.catalogKeys;
-                }
                 if (settings.catalogItems) payload.catalogItems = Number(settings.catalogItems);
                 if (settings.generationRetries !== undefined) {
                     const retries = Number(settings.generationRetries);
@@ -1258,13 +1016,6 @@ CONFIG_TEMPLATE = dedent(
                 if (includeConfig) {
                     const settings = collectManifestSettings();
                     Object.entries(settings).forEach(([key, value]) => {
-                        if (Array.isArray(value)) {
-                            if (value.length === 0) {
-                                return;
-                            }
-                            params.set(key, value.join(','));
-                            return;
-                        }
                         if (value) {
                             params.set(key, value);
                         }
@@ -1302,7 +1053,6 @@ CONFIG_TEMPLATE = dedent(
                         return;
                     }
                     profileStatus = normalized;
-                    applyCatalogSelection(normalized.catalogKeys || [], { silent: true });
                     syncHistoryLimitFromStatus();
                     syncGenerationRetriesFromStatus();
                     updateManifestPreview();
@@ -1345,7 +1095,6 @@ CONFIG_TEMPLATE = dedent(
                         return null;
                     }
                     profileStatus = normalized;
-                    applyCatalogSelection(normalized.catalogKeys || [], { silent: true });
                     syncHistoryLimitFromStatus();
                     syncGenerationRetriesFromStatus();
                     updateManifestPreview();
@@ -1376,7 +1125,6 @@ CONFIG_TEMPLATE = dedent(
                     'openrouterKey',
                     'openrouterModel',
                     'metadataAddon',
-                    'catalogKeys',
                     'catalogItems',
                     'generationRetries',
                     'traktHistoryLimit',
@@ -1387,14 +1135,6 @@ CONFIG_TEMPLATE = dedent(
                 const segments = [];
                 manifestKeys.forEach((key) => {
                     const value = settings[key];
-                    if (Array.isArray(value)) {
-                        if (value.length === 0) {
-                            return;
-                        }
-                        segments.push(encodeURIComponent(key));
-                        segments.push(encodeURIComponent(value.join(',')));
-                        return;
-                    }
                     if (!value) {
                         return;
                     }
@@ -1752,16 +1492,6 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
         "openrouterModel": settings.openrouter_model,
         "catalogItemCount": settings.catalog_item_count,
         "generationRetryLimit": settings.generation_retry_limit,
-        "catalogDefinitions": [
-            {
-                "key": definition.key,
-                "title": definition.title,
-                "description": definition.description,
-                "contentType": definition.content_type,
-            }
-            for definition in STABLE_CATALOGS
-        ],
-        "selectedCatalogKeys": list(settings.catalog_keys),
         "traktHistoryLimit": settings.trakt_history_limit,
         "refreshIntervalSeconds": settings.refresh_interval_seconds,
         "responseCacheSeconds": settings.response_cache_seconds,

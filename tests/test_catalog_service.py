@@ -212,48 +212,6 @@ def test_catalog_payload_available_after_refresh(tmp_path) -> None:
     asyncio.run(runner())
 
 
-def test_profile_state_respects_catalog_key_selection(tmp_path) -> None:
-    """Stored catalog key selections should be reflected in profile state."""
-
-    async def runner() -> None:
-        database_path = tmp_path / "catalog-keys.db"
-        database = Database(f"sqlite+aiosqlite:///{database_path}")
-        await database.create_all()
-
-        settings = Settings(_env_file=None)
-        service = CatalogService(
-            settings,
-            cast(TraktClient, object()),
-            cast(OpenRouterClient, object()),
-            cast(MetadataAddonClient, object()),
-            database.session_factory,
-        )
-
-        async with database.session_factory() as session:
-            profile = Profile(
-                id="selective",
-                openrouter_api_key="test-key",
-                openrouter_model="test-model",
-                catalog_keys=["movies-for-you", "hidden-gems"],
-                catalog_count=2,
-                catalog_item_count=6,
-                generation_retry_limit=2,
-                refresh_interval_seconds=3600,
-                response_cache_seconds=1800,
-                trakt_history_limit=500,
-            )
-            session.add(profile)
-            await session.commit()
-
-        state = await service._load_profile_state("selective")
-        assert state is not None
-        assert state.catalog_keys == ("movies-for-you", "hidden-gems")
-
-        await database.dispose()
-
-    asyncio.run(runner())
-
-
 def test_profile_status_payload_flags() -> None:
     """Ready flag reflects catalog availability and refresh state."""
 
@@ -263,7 +221,6 @@ def test_profile_status_payload_flags() -> None:
         openrouter_model="model",
         trakt_client_id=None,
         trakt_access_token=None,
-        catalog_keys=("movies-for-you",),
         catalog_item_count=12,
         generation_retry_limit=3,
         refresh_interval_seconds=3600,

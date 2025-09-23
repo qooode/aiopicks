@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
 
 from app.main import register_routes
 from app.services.catalog_generator import CatalogService, ManifestConfig
@@ -27,27 +25,6 @@ class DummyCatalogService(CatalogService):
 
     def profile_id_from_catalog_id(self, catalog_id: str) -> str | None:  # pragma: no cover - not used
         return None
-
-
-def test_manifest_config_accepts_catalog_key_list() -> None:
-    config = ManifestConfig.model_validate(
-        {"catalogKeys": ["movies-for-you", "hidden-gems"]}
-    )
-
-    assert config.catalog_keys == ("movies-for-you", "hidden-gems")
-
-
-def test_manifest_config_accepts_catalog_key_string() -> None:
-    config = ManifestConfig.model_validate(
-        {"catalogKeys": "movies-for-you, hidden-gems"}
-    )
-
-    assert config.catalog_keys == ("movies-for-you", "hidden-gems")
-
-
-def test_manifest_config_rejects_unknown_catalog_key() -> None:
-    with pytest.raises(ValidationError):
-        ManifestConfig.model_validate({"catalogKeys": ["unknown"]})
 
 
 def test_manifest_advertises_only_catalog_resource() -> None:
