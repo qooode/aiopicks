@@ -91,6 +91,10 @@ class Database:
             "trakt_history_snapshot",
             "ALTER TABLE profiles ADD COLUMN trakt_history_snapshot JSON",
         )
+        _ensure_column(
+            "catalog_keys",
+            "ALTER TABLE profiles ADD COLUMN catalog_keys JSON",
+        )
 
     async def dispose(self) -> None:
         """Dispose of the underlying database engine."""
