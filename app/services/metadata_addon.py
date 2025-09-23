@@ -1,4 +1,4 @@
-"""Helper client for fetching metadata from Cinemeta-compatible add-ons."""
+"""Helper client for fetching metadata from catalog search endpoints."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import httpx
 from ..utils import slugify
@@ -28,7 +28,7 @@ class MetadataMatch:
 
 
 class MetadataAddonClient:
-    """Wrapper around Cinemeta-compatible catalog search endpoints."""
+    """Wrapper around generic catalog search endpoints."""
 
     _SEARCH_PATH = "/catalog/{type}/top/search={query}.json"
 
@@ -215,13 +215,31 @@ class MetadataAddonClient:
     def _normalize_base_url(value: str | None) -> str | None:
         if not value:
             return None
-        normalized = value.strip()
+        normalized = unquote(value).strip()
         if not normalized:
             return None
+        normalized = normalized.rstrip("…")
         normalized = normalized.rstrip("/")
-        lowered = normalized.lower()
-        for suffix in ("/manifest.json", "/manifest"):
-            if lowered.endswith(suffix):
-                normalized = normalized[: -len(suffix)].rstrip("/")
-                break
+        normalized = normalized.rstrip("…")
+
+        split = urlsplit(normalized)
+        if split.scheme and split.netloc:
+            path = split.path.rstrip("/")
+            if path:
+                segments = [segment for segment in path.split("/") if segment]
+                if segments and segments[-1].lower().startswith("manifest"):
+                    segments = segments[:-1]
+                path = "/".join(segments)
+                normalized_path = f"/{path}" if path else ""
+            else:
+                normalized_path = ""
+            normalized = urlunsplit((split.scheme, split.netloc, normalized_path, "", ""))
+            normalized = normalized.rstrip("/")
+        else:
+            lowered = normalized.lower().rstrip("…")
+            for suffix in ("/manifest.json", "/manifest"):
+                if lowered.endswith(suffix):
+                    normalized = normalized[: -len(suffix)].rstrip("/").rstrip("…")
+                    break
+
         return normalized or None
