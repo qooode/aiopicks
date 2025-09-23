@@ -79,12 +79,12 @@ def test_manifest_allows_catalog_key_overrides() -> None:
 
     with TestClient(app) as client:
         response = client.get(
-            "/manifest/catalogKeys/movies-for-you%2Chidden-gems/manifest.json"
+            "/manifest/catalogKeys/movies-for-you%2Cyou-missed-these/manifest.json"
         )
 
     assert response.status_code == 200
     assert service.last_config is not None
-    assert service.last_config.catalog_keys == ("movies-for-you", "hidden-gems")
+    assert service.last_config.catalog_keys == ("movies-for-you", "you-missed-these")
 
 
 def test_manifest_rejects_malformed_path_overrides() -> None:

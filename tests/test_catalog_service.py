@@ -395,10 +395,10 @@ def test_manifest_config_catalog_keys_normalised() -> None:
     """Manifest config should normalise catalog key selections."""
 
     config = ManifestConfig.model_validate(
-        {"catalogKeys": ["Movies-For-You", "Hidden Gems", "Movies-for-you"]}
+        {"catalogKeys": ["Movies-For-You", "You Missed These", "Movies-for-you"]}
     )
 
-    assert config.catalog_keys == ("movies-for-you", "hidden-gems")
+    assert config.catalog_keys == ("movies-for-you", "you-missed-these")
 
 
 def test_resolve_profile_persists_trakt_display_name(tmp_path) -> None:
@@ -559,16 +559,16 @@ def test_catalog_key_preferences_persisted(tmp_path) -> None:
         config = ManifestConfig.model_validate(
             {
                 "openrouterKey": "sk-custom",
-                "catalogKeys": ["movies-for-you", "hidden-gems"],
+                "catalogKeys": ["movies-for-you", "you-missed-these"],
             }
         )
         context = await service._resolve_profile(config)
 
-        assert context.state.catalog_keys == ("movies-for-you", "hidden-gems")
+        assert context.state.catalog_keys == ("movies-for-you", "you-missed-these")
 
         loaded = await service._load_profile_state(context.state.id)
         assert loaded is not None
-        assert loaded.catalog_keys == ("movies-for-you", "hidden-gems")
+        assert loaded.catalog_keys == ("movies-for-you", "you-missed-these")
 
         await database.dispose()
 
