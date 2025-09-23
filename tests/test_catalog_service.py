@@ -12,11 +12,15 @@ from app.database import Database
 from app.db_models import CatalogRecord, Profile
 from app.models import Catalog, CatalogItem
 from app.services.metadata_addon import MetadataAddonClient, MetadataMatch
-from app.services.catalog_generator import CatalogService
-from app.services.catalog_generator import ProfileState, ProfileStatus
+from app.services.catalog_generator import (
+    CatalogService,
+    ManifestConfig,
+    ProfileState,
+    ProfileStatus,
+    WatchedMediaIndex,
+)
 from app.services.openrouter import OpenRouterClient
 from app.services.trakt import TraktClient
-from app.services.catalog_generator import ManifestConfig
 
 
 class RefreshingCatalogService(CatalogService):
@@ -662,6 +666,50 @@ def test_serialise_watched_index_filters_empty_entries() -> None:
         "movie:title:another film:2021",
     }
     assert payload["movie"]["recent_titles"] == ["Another Film (2021)"]
+
+
+def test_prune_watched_items_removes_seen_entries() -> None:
+    """Catalog pruning removes items that match the watched fingerprint index."""
+
+    service = CatalogService.__new__(CatalogService)
+    generated = datetime.utcnow()
+    watched_fps = {
+        "movie:imdb:tt1234567",
+        "movie:title:seen film",
+        "movie:title:seen film:2020",
+    }
+    catalog = Catalog(
+        id="aiopicks-movie-demo",
+        type="movie",
+        title="Demo",
+        description=None,
+        seed="seed",
+        items=[
+            CatalogItem(
+                title="Seen Film",
+                type="movie",
+                imdb_id="TT1234567",
+                year=2020,
+            ),
+            CatalogItem(
+                title="Fresh Film",
+                type="movie",
+                imdb_id="tt7654321",
+                year=2021,
+            ),
+        ],
+        generated_at=generated,
+    )
+    catalogs = {"movie": {catalog.id: catalog}, "series": {}}
+    watched_index = {
+        "movie": WatchedMediaIndex(fingerprints=watched_fps, recent_titles=[]),
+        "series": WatchedMediaIndex(fingerprints=set(), recent_titles=[]),
+    }
+
+    service._prune_watched_items(catalogs, watched_index)
+
+    remaining = catalogs["movie"][catalog.id].items
+    assert [item.title for item in remaining] == ["Fresh Film"]
 
 
 def test_metadata_lookup_retries_on_402() -> None:

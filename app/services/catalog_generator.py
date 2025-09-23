@@ -500,6 +500,7 @@ class CatalogService:
                 retry_limit=state.generation_retry_limit,
             )
             catalogs = self._bundle_to_dict(bundle)
+            self._prune_watched_items(catalogs, watched_index)
             await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
             if not (catalogs["movie"] or catalogs["series"]):
                 logger.warning(
@@ -1340,9 +1341,61 @@ class CatalogService:
                 if lowered:
                     fingerprints.add(f"{prefix}:title:{lowered}")
                     if isinstance(display_year, int):
-                        fingerprints.add(f"{prefix}:title:{lowered}:{display_year}")
+                        fingerprints.add(
+                            f"{prefix}:title:{lowered}:{display_year}"
+                        )
 
         return WatchedMediaIndex(fingerprints=fingerprints, recent_titles=titles[:40])
+
+    def _prune_watched_items(
+        self,
+        catalogs: dict[str, dict[str, Catalog]],
+        watched_index: dict[str, WatchedMediaIndex],
+    ) -> None:
+        """Strip catalog entries that match the viewer's completed history."""
+
+        def _matches(item: CatalogItem, excluded: set[str]) -> bool:
+            if not excluded:
+                return False
+            item_fingerprints = self._catalog_item_fingerprints(item)
+            return any(fp in excluded for fp in item_fingerprints)
+
+        for content_type, catalog_map in catalogs.items():
+            index = watched_index.get(content_type)
+            if index is None or not index.fingerprints:
+                continue
+            excluded = index.fingerprints
+            for catalog_id, catalog in list(catalog_map.items()):
+                filtered = [
+                    item for item in catalog.items if not _matches(item, excluded)
+                ]
+                if len(filtered) != len(catalog.items):
+                    catalog_map[catalog_id] = catalog.model_copy(
+                        update={"items": filtered}
+                    )
+
+    def _catalog_item_fingerprints(self, item: CatalogItem) -> set[str]:
+        """Build fingerprints mirroring the watched history index."""
+
+        fingerprints: set[str] = set()
+        prefix = item.type
+        if item.imdb_id:
+            fingerprints.add(f"{prefix}:imdb:{item.imdb_id.lower()}")
+        if item.trakt_id is not None:
+            fingerprints.add(f"{prefix}:trakt:{item.trakt_id}")
+        if item.tmdb_id is not None:
+            fingerprints.add(f"{prefix}:tmdb:{item.tmdb_id}")
+        title = (item.title or "").strip().casefold()
+        if title:
+            fingerprints.add(f"{prefix}:title:{title}")
+            if item.year:
+                fingerprints.add(f"{prefix}:title:{title}:{item.year}")
+            slug_title = slugify(title)
+            if slug_title:
+                fingerprints.add(f"{prefix}:slug:{slug_title}")
+                if item.year:
+                    fingerprints.add(f"{prefix}:slug:{slug_title}:{item.year}")
+        return fingerprints
 
     def _build_summary(
         self,
