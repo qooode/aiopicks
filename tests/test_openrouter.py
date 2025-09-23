@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import cast
 
@@ -155,3 +156,69 @@ def test_normalise_exclusions_builds_fingerprints_from_recent_titles() -> None:
     series_fps = normalised["series"]["fingerprints"]
     assert "series:title:known show" in series_fps
     assert "series:slug:known-show" in series_fps
+
+
+def test_ensure_item_targets_retries_when_additions_drop_out() -> None:
+    """Empty top-up batches still consume attempts and trigger another request."""
+
+    class _TrackingOpenRouterClient(OpenRouterClient):
+        def __init__(self, responses: list[dict[str, list[CatalogItem]]]):
+            super().__init__(Settings(_env_file=None), cast(object, _DummyAsyncClient()))  # type: ignore[arg-type]
+            self._responses = list(responses)
+            self.attempts: list[int] = []
+
+        async def _top_up_catalogs(  # type: ignore[override]
+            self,
+            summary: dict[str, object],
+            *,
+            seed: str,
+            content_type: str,
+            requests: dict[str, dict[str, object]],
+            item_limit: int,
+            api_key: str,
+            model: str,
+            exclusions: dict[str, object] | None = None,
+            attempt: int = 0,
+            attempt_limit: int = 1,
+        ) -> dict[str, list[CatalogItem]]:
+            self.attempts.append(attempt)
+            if self._responses:
+                return self._responses.pop(0)
+            return {}
+
+    now = datetime.utcnow()
+    catalog = Catalog(
+        id="aiopicks-movie-demo",
+        type="movie",
+        title="Demo",
+        description=None,
+        seed="seed",
+        items=[
+            CatalogItem(title="Seen Film", type="movie", year=2020),
+        ],
+        generated_at=now,
+    )
+    bundle = CatalogBundle(movie_catalogs=[catalog], series_catalogs=[])
+
+    responses = [
+        {catalog.id: [CatalogItem(title="Seen Film", type="movie", year=2020)]},
+        {catalog.id: [CatalogItem(title="Fresh Film", type="movie", year=2021)]},
+    ]
+    client = _TrackingOpenRouterClient(responses)
+
+    async def runner() -> None:
+        await client._ensure_item_targets(
+            {},
+            seed="seed",
+            bundle=bundle,
+            item_limit=2,
+            api_key="test-key",
+            model="test-model",
+            exclusions=None,
+            max_attempts=3,
+        )
+
+    asyncio.run(runner())
+
+    assert [item.title for item in catalog.items] == ["Seen Film", "Fresh Film"]
+    assert client.attempts == [0, 1]
