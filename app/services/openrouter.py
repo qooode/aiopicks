@@ -250,13 +250,9 @@ class OpenRouterClient:
         content_label = "movie" if definition.content_type == "movie" else "series"
         content_label_plural = "movies" if content_label == "movie" else "series"
 
-        avoid_titles = [
-            title
-            for title in (exclusions or {}).get("titles", [])
-            if isinstance(title, str) and title.strip()
-        ]
+        avoid_titles = self._render_exclusion_titles(exclusions, limit=28)
         if avoid_titles:
-            avoid_list = ", ".join(avoid_titles[:16])
+            avoid_list = "; ".join(avoid_titles)
         else:
             avoid_list = "none supplied—use the history context to stay fresh."
 
@@ -500,15 +496,9 @@ class OpenRouterClient:
             "Respond with JSON where each key is a catalog ID and the value is an "
             "array of the missing items."
         )
-        avoided_titles: list[str] = []
+        avoided_titles = self._render_exclusion_titles(exclusions, limit=20)
         excluded: set[str] = set()
         if exclusions:
-            titles = [
-                str(title)
-                for title in exclusions.get("titles", [])
-                if isinstance(title, str) and title
-            ]
-            avoided_titles = titles[:12]
             excluded = set(exclusions.get("fingerprints", set()))
         if avoided_titles:
             prompt_lines.append(
@@ -613,6 +603,66 @@ class OpenRouterClient:
                 additions[catalog_id] = collected
         return additions
 
+    def _render_exclusion_titles(
+        self, exclusions: dict[str, Any] | None, *, limit: int
+    ) -> list[str]:
+        """Render a readable list of completed titles from exclusion metadata."""
+
+        if not exclusions or limit <= 0:
+            return []
+
+        titles: list[str] = []
+        for title in exclusions.get("titles", []) or []:
+            if isinstance(title, str):
+                cleaned = title.strip()
+                if cleaned and cleaned not in titles:
+                    titles.append(cleaned)
+            if len(titles) >= limit:
+                return titles[:limit]
+
+        if titles:
+            return titles[:limit]
+
+        rendered: list[str] = []
+        seen: set[str] = set()
+        for fingerprint in sorted(exclusions.get("fingerprints", []) or []):
+            if not isinstance(fingerprint, str):
+                continue
+            parts = fingerprint.split(":")
+            if len(parts) < 3:
+                continue
+            _, kind, *values = parts
+            if kind not in {"title", "slug"}:
+                continue
+            if not values:
+                continue
+            name = values[0]
+            if not isinstance(name, str) or not name.strip():
+                continue
+            if kind == "slug":
+                base_name = name.replace("-", " ").replace("_", " ")
+            else:
+                base_name = name
+            display = base_name.strip()
+            if not display:
+                continue
+            display = display.title()
+            year: str | None = None
+            if len(values) >= 2:
+                candidate = values[1]
+                if isinstance(candidate, str) and candidate.isdigit():
+                    year = candidate
+            if year:
+                label = f"{display} ({year})"
+            else:
+                label = display
+            if label not in seen:
+                seen.add(label)
+                rendered.append(label)
+            if len(rendered) >= limit:
+                break
+        return rendered
+
     def _normalise_catalog(
         self,
         catalog: Catalog,
@@ -714,7 +764,7 @@ class OpenRouterClient:
             if fingerprints or titles:
                 normalised[content_type] = {
                     "fingerprints": fingerprints,
-                    "titles": titles[:24],
+                    "titles": titles[:40],
                 }
         return normalised
 
