@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -742,6 +743,8 @@ class OpenRouterClient:
         if len(filtered) != len(catalog.items):
             catalog.items = filtered
 
+    _TITLE_YEAR_RE = re.compile(r"^(?P<title>.+?)(?:\s*\((?P<year>\d{4})\))?$")
+
     def _normalise_exclusions(
         self, exclusions: dict[str, dict[str, Any]] | None
     ) -> dict[str, dict[str, Any]]:
@@ -758,15 +761,52 @@ class OpenRouterClient:
             for fp in payload.get("fingerprints", []) or []:
                 if isinstance(fp, str) and fp:
                     fingerprints.add(fp)
+            recent_titles = []
             for title in payload.get("recent_titles", []) or []:
-                if isinstance(title, str) and title:
-                    titles.append(title)
+                if isinstance(title, str):
+                    cleaned = title.strip()
+                    if cleaned:
+                        recent_titles.append(cleaned)
+                        titles.append(cleaned)
+            if recent_titles:
+                fingerprints.update(
+                    self._fingerprints_from_recent_titles(
+                        content_type, recent_titles
+                    )
+                )
             if fingerprints or titles:
                 normalised[content_type] = {
                     "fingerprints": fingerprints,
                     "titles": titles[:40],
                 }
         return normalised
+
+    def _fingerprints_from_recent_titles(
+        self, content_type: str, titles: list[str]
+    ) -> set[str]:
+        prefix = "movie" if content_type == "movie" else "series"
+        fingerprints: set[str] = set()
+        for entry in titles:
+            match = self._TITLE_YEAR_RE.match(entry)
+            if match is None:
+                base_title = entry.strip()
+                year: str | None = None
+            else:
+                base_title = (match.group("title") or "").strip()
+                year = match.group("year")
+            if not base_title:
+                continue
+            lowered = base_title.casefold()
+            if lowered:
+                fingerprints.add(f"{prefix}:title:{lowered}")
+                if year and year.isdigit():
+                    fingerprints.add(f"{prefix}:title:{lowered}:{year}")
+            slug_title = slugify(lowered)
+            if slug_title:
+                fingerprints.add(f"{prefix}:slug:{slug_title}")
+                if year and year.isdigit():
+                    fingerprints.add(f"{prefix}:slug:{slug_title}:{year}")
+        return fingerprints
 
     def _enforce_session_uniqueness(
         self,
