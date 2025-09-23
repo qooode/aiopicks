@@ -78,6 +78,7 @@ async def _seed_stale_profile(
             openrouter_api_key="test-key",
             openrouter_model="test-model",
             catalog_count=1,
+            catalog_keys=list(service._default_catalog_keys[:1]),
             catalog_item_count=1,
             refresh_interval_seconds=3600,
             response_cache_seconds=60,
@@ -221,6 +222,7 @@ def test_profile_status_payload_flags() -> None:
         openrouter_model="model",
         trakt_client_id=None,
         trakt_access_token=None,
+        catalog_keys=("movies-for-you",),
         catalog_item_count=12,
         generation_retry_limit=3,
         refresh_interval_seconds=3600,
@@ -240,6 +242,7 @@ def test_profile_status_payload_flags() -> None:
     assert payload["ready"] is True
     assert payload["hasCatalogs"] is True
     assert payload["refreshing"] is False
+    assert payload["catalogKeys"] == ["movies-for-you"]
 
     refreshing_status = ProfileStatus(
         state=base_state,
@@ -250,6 +253,7 @@ def test_profile_status_payload_flags() -> None:
     refreshing_payload = refreshing_status.to_payload()
     assert refreshing_payload["ready"] is False
     assert refreshing_payload["needsRefresh"] is True
+    assert refreshing_payload["catalogKeys"] == ["movies-for-you"]
 
 
 def test_trakt_snapshot_normalisation() -> None:
@@ -387,6 +391,16 @@ def test_profile_id_hashes_trakt_token_when_slug_missing() -> None:
     assert profile_id == f"trakt-{expected}"
 
 
+def test_manifest_config_catalog_keys_normalised() -> None:
+    """Manifest config should normalise catalog key selections."""
+
+    config = ManifestConfig.model_validate(
+        {"catalogKeys": ["Movies-For-You", "Hidden Gems", "Movies-for-you"]}
+    )
+
+    assert config.catalog_keys == ("movies-for-you", "hidden-gems")
+
+
 def test_resolve_profile_persists_trakt_display_name(tmp_path) -> None:
     """Resolved profiles store the human-friendly Trakt display name."""
 
@@ -452,6 +466,7 @@ def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:
             openrouter_api_key="key",
             openrouter_model="model",
             catalog_count=1,
+            catalog_keys=list(service._default_catalog_keys[:1]),
             catalog_item_count=8,
             refresh_interval_seconds=3600,
             response_cache_seconds=3600,
@@ -518,6 +533,42 @@ def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:
             stored = await session.get(CatalogRecord, record_id)
             assert stored is not None
             assert stored.catalog_id == catalog_id
+
+        await database.dispose()
+
+    asyncio.run(runner())
+
+
+def test_catalog_key_preferences_persisted(tmp_path) -> None:
+    """Custom catalog lane selections should be stored on the profile."""
+
+    async def runner() -> None:
+        database_path = tmp_path / "catalog-keys.db"
+        database = Database(f"sqlite+aiosqlite:///{database_path}")
+        await database.create_all()
+
+        settings = Settings(_env_file=None)
+        service = CatalogService(
+            settings,
+            cast(TraktClient, object()),
+            cast(OpenRouterClient, object()),
+            cast(MetadataAddonClient, object()),
+            database.session_factory,
+        )
+
+        config = ManifestConfig.model_validate(
+            {
+                "openrouterKey": "sk-custom",
+                "catalogKeys": ["movies-for-you", "hidden-gems"],
+            }
+        )
+        context = await service._resolve_profile(config)
+
+        assert context.state.catalog_keys == ("movies-for-you", "hidden-gems")
+
+        loaded = await service._load_profile_state(context.state.id)
+        assert loaded is not None
+        assert loaded.catalog_keys == ("movies-for-you", "hidden-gems")
 
         await database.dispose()
 

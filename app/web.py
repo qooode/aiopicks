@@ -7,6 +7,7 @@ from textwrap import dedent
 from urllib.parse import urlparse
 
 from .config import Settings
+from .stable_catalogs import STABLE_CATALOGS
 
 
 CONFIG_TEMPLATE = dedent(
@@ -103,6 +104,57 @@ CONFIG_TEMPLATE = dedent(
             font-weight: 400;
             font-size: 0.85rem;
             color: var(--text-muted);
+        }
+        .catalog-lane-list {
+            display: grid;
+            gap: 0.75rem;
+        }
+        .catalog-toggle {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0.85rem;
+            align-items: flex-start;
+            padding: 0.75rem 0.9rem;
+            border-radius: 16px;
+            border: 1px solid var(--outline);
+            background: var(--surface-muted);
+            transition: border 0.2s ease, background 0.2s ease;
+            cursor: pointer;
+        }
+        .catalog-toggle:hover {
+            border-color: var(--outline-strong);
+        }
+        .catalog-toggle input[type="checkbox"] {
+            margin-top: 0.35rem;
+            width: 1.1rem;
+            height: 1.1rem;
+            accent-color: var(--accent);
+        }
+        .catalog-toggle .catalog-text {
+            display: grid;
+            gap: 0.35rem;
+        }
+        .catalog-toggle .catalog-title {
+            font-weight: 600;
+        }
+        .catalog-toggle .catalog-meta {
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+        }
+        .catalog-toggle .catalog-description {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            line-height: 1.4;
+        }
+        .catalog-warning {
+            color: #ffb74d;
+            font-size: 0.85rem;
+            margin-top: 0.25rem;
+        }
+        .catalog-warning.hidden {
+            display: none;
         }
         input[type="text"],
         select {
@@ -269,6 +321,11 @@ CONFIG_TEMPLATE = dedent(
         .hidden {
             display: none !important;
         }
+        @media (min-width: 720px) {
+            .catalog-lane-list {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
         @keyframes spin {
             0% {
                 transform: rotate(0deg);
@@ -340,6 +397,14 @@ CONFIG_TEMPLATE = dedent(
                     <input id="config-metadata-addon" type="text" placeholder="https://example-addon.strem.fun" inputmode="url" spellcheck="false" />
                 </div>
                 <div class="field">
+                    <label>
+                        <span>Catalog lanes</span>
+                        <span class="helper">Toggle which AI lists to generate</span>
+                    </label>
+                    <div class="catalog-lane-list" id="catalog-lane-list"></div>
+                    <p class="catalog-warning hidden" id="catalog-lane-warning">Select at least one lane.</p>
+                </div>
+                <div class="field">
                     <label for="config-catalog-items">Items per catalog <span class="range-value" id="catalog-items-value"></span></label>
                     <input id="config-catalog-items" type="range" min="4" max="100" step="1" />
                 </div>
@@ -391,6 +456,8 @@ CONFIG_TEMPLATE = dedent(
             const openrouterKey = document.getElementById('config-openrouter-key');
             const openrouterModel = document.getElementById('config-openrouter-model');
             const metadataAddonInput = document.getElementById('config-metadata-addon');
+            const catalogLaneContainer = document.getElementById('catalog-lane-list');
+            const catalogLaneWarning = document.getElementById('catalog-lane-warning');
             const catalogItemsSlider = document.getElementById('config-catalog-items');
             const catalogItemsValue = document.getElementById('catalog-items-value');
             const generationRetriesSlider = document.getElementById('config-generation-retries');
@@ -433,6 +500,10 @@ CONFIG_TEMPLATE = dedent(
             let preparePending = false;
             let profileStatus = null;
             let statusPollTimer = null;
+            const catalogDefinitions = Array.isArray(defaults.catalogDefinitions)
+                ? defaults.catalogDefinitions
+                : [];
+            const catalogToggleMap = new Map();
 
             const profileStorageKey = 'aiopicks.profileId';
             let persistedProfileId = readStoredProfileId();
@@ -478,6 +549,139 @@ CONFIG_TEMPLATE = dedent(
                 }
             }
 
+            function normaliseCatalogKey(value) {
+                if (typeof value !== 'string') {
+                    value = String(value || '');
+                }
+                const slug = value.trim().toLowerCase().replace(/[_\s]+/g, '-');
+                return slug
+                    .split('-')
+                    .filter((part) => part)
+                    .join('-');
+            }
+
+            function getAllCatalogKeys() {
+                if (!catalogDefinitions.length) {
+                    return [];
+                }
+                return catalogDefinitions
+                    .map((definition) => normaliseCatalogKey(definition.key))
+                    .filter((key) => key);
+            }
+
+            function showCatalogWarning(message) {
+                if (!catalogLaneWarning) {
+                    return;
+                }
+                catalogLaneWarning.textContent = message || '';
+                catalogLaneWarning.classList.remove('hidden');
+            }
+
+            function hideCatalogWarning() {
+                if (!catalogLaneWarning) {
+                    return;
+                }
+                catalogLaneWarning.textContent = '';
+                catalogLaneWarning.classList.add('hidden');
+            }
+
+            function renderCatalogSelectors(initialKeys = []) {
+                if (!catalogLaneContainer) {
+                    return;
+                }
+                const fallback = getAllCatalogKeys();
+                const resolved = initialKeys.length > 0 ? initialKeys : fallback;
+                const selectedKeys = new Set(
+                    resolved.map((key) => normaliseCatalogKey(key)).filter((key) => key)
+                );
+                catalogLaneContainer.innerHTML = '';
+                catalogToggleMap.clear();
+                catalogDefinitions.forEach((definition) => {
+                    const key = normaliseCatalogKey(definition.key);
+                    if (!key) {
+                        return;
+                    }
+                    const label = document.createElement('label');
+                    label.className = 'catalog-toggle';
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.value = key;
+                    checkbox.checked = selectedKeys.size > 0 ? selectedKeys.has(key) : true;
+                    checkbox.addEventListener('change', () => {
+                        if (!checkbox.checked && getSelectedCatalogKeys().length === 0) {
+                            checkbox.checked = true;
+                            showCatalogWarning('Select at least one lane.');
+                            return;
+                        }
+                        hideCatalogWarning();
+                        markProfileDirty();
+                        updateManifestPreview();
+                    });
+                    const text = document.createElement('div');
+                    text.className = 'catalog-text';
+                    const title = document.createElement('span');
+                    title.className = 'catalog-title';
+                    title.textContent = definition.title || key;
+                    const meta = document.createElement('span');
+                    meta.className = 'catalog-meta';
+                    meta.textContent =
+                        definition.contentType === 'series' ? 'Series lane' : 'Movie lane';
+                    const description = document.createElement('span');
+                    description.className = 'catalog-description';
+                    description.textContent = definition.description || '';
+                    text.appendChild(title);
+                    text.appendChild(meta);
+                    if (description.textContent) {
+                        text.appendChild(description);
+                    }
+                    label.appendChild(checkbox);
+                    label.appendChild(text);
+                    catalogLaneContainer.appendChild(label);
+                    catalogToggleMap.set(key, checkbox);
+                });
+            }
+
+            function applyCatalogSelection(keys, options = {}) {
+                const { silent = false } = options;
+                if (!catalogDefinitions.length) {
+                    return;
+                }
+                const normalised = Array.isArray(keys)
+                    ? keys.map((key) => normaliseCatalogKey(key)).filter((key) => key)
+                    : [];
+                const resolved = normalised.length > 0 ? normalised : getAllCatalogKeys();
+                const selection = new Set(resolved);
+                catalogDefinitions.forEach((definition) => {
+                    const key = normaliseCatalogKey(definition.key);
+                    const checkbox = catalogToggleMap.get(key);
+                    if (!checkbox) {
+                        return;
+                    }
+                    checkbox.checked = selection.has(key);
+                });
+                if (!silent) {
+                    hideCatalogWarning();
+                }
+            }
+
+            function getSelectedCatalogKeys() {
+                if (!catalogDefinitions.length) {
+                    return [];
+                }
+                const selected = [];
+                catalogDefinitions.forEach((definition) => {
+                    const key = normaliseCatalogKey(definition.key);
+                    if (!key) {
+                        return;
+                    }
+                    const checkbox = catalogToggleMap.get(key);
+                    if (checkbox && checkbox.checked) {
+                        selected.push(key);
+                    }
+                });
+                return selected;
+            }
+
             function generateProfileId() {
                 const prefix = 'user-';
                 const bytes = new Uint8Array(6);
@@ -510,6 +714,13 @@ CONFIG_TEMPLATE = dedent(
                 persistProfileId(generated);
                 return generated;
             }
+
+            const defaultCatalogSelection = Array.isArray(defaults.catalogKeys)
+                ? defaults.catalogKeys
+                : [];
+            renderCatalogSelectors(defaultCatalogSelection);
+            applyCatalogSelection(defaultCatalogSelection, { silent: true });
+            hideCatalogWarning();
 
             openrouterModel.value = defaults.openrouterModel || '';
             metadataAddonInput.value = defaults.metadataAddon || '';
@@ -880,6 +1091,10 @@ CONFIG_TEMPLATE = dedent(
                 const historyLimit = Number(raw.traktHistoryLimit);
                 const retryLimit = Number(raw.generationRetryLimit);
                 const historyRaw = raw.traktHistory && typeof raw.traktHistory === 'object' ? raw.traktHistory : {};
+                const rawCatalogKeys = Array.isArray(raw.catalogKeys) ? raw.catalogKeys : [];
+                const catalogKeys = rawCatalogKeys
+                    .map((key) => normaliseCatalogKey(key))
+                    .filter((key) => key);
                 const normaliseCount = (value) => {
                     const numeric = Number(value);
                     return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
@@ -954,6 +1169,7 @@ CONFIG_TEMPLATE = dedent(
                     metadataAddon: typeof raw.metadataAddon === 'string'
                         ? raw.metadataAddon.trim()
                         : '',
+                    catalogKeys,
                     generationRetryLimit: Number.isFinite(retryLimit) && retryLimit >= 0 ? retryLimit : 0,
                     traktHistoryLimit: Number.isFinite(historyLimit) && historyLimit > 0 ? historyLimit : 0,
                     traktHistory: history,
@@ -965,6 +1181,7 @@ CONFIG_TEMPLATE = dedent(
                     openrouterKey: openrouterKey.value.trim(),
                     openrouterModel: openrouterModel.value.trim(),
                     metadataAddon: metadataAddonInput.value.trim(),
+                    catalogKeys: getSelectedCatalogKeys(),
                     catalogItems: catalogItemsSlider.value,
                     generationRetries: generationRetriesSlider.value,
                     traktHistoryLimit: historySlider.value,
@@ -986,6 +1203,9 @@ CONFIG_TEMPLATE = dedent(
                 }
                 if (settings.openrouterKey) payload.openrouterKey = settings.openrouterKey;
                 if (settings.openrouterModel) payload.openrouterModel = settings.openrouterModel;
+                if (Array.isArray(settings.catalogKeys) && settings.catalogKeys.length > 0) {
+                    payload.catalogKeys = settings.catalogKeys;
+                }
                 if (settings.catalogItems) payload.catalogItems = Number(settings.catalogItems);
                 if (settings.generationRetries !== undefined) {
                     const retries = Number(settings.generationRetries);
@@ -1016,9 +1236,20 @@ CONFIG_TEMPLATE = dedent(
                 if (includeConfig) {
                     const settings = collectManifestSettings();
                     Object.entries(settings).forEach(([key, value]) => {
-                        if (value) {
-                            params.set(key, value);
+                        if (value == null) {
+                            return;
                         }
+                        if (Array.isArray(value)) {
+                            if (value.length === 0) {
+                                return;
+                            }
+                            params.set(key, value.join(','));
+                            return;
+                        }
+                        if (value === '') {
+                            return;
+                        }
+                        params.set(key, String(value));
                     });
                 }
                 const hasKeys = [...params.keys()].length > 0;
@@ -1053,6 +1284,7 @@ CONFIG_TEMPLATE = dedent(
                         return;
                     }
                     profileStatus = normalized;
+                    syncCatalogSelectionsFromStatus();
                     syncHistoryLimitFromStatus();
                     syncGenerationRetriesFromStatus();
                     updateManifestPreview();
@@ -1095,6 +1327,7 @@ CONFIG_TEMPLATE = dedent(
                         return null;
                     }
                     profileStatus = normalized;
+                    syncCatalogSelectionsFromStatus();
                     syncHistoryLimitFromStatus();
                     syncGenerationRetriesFromStatus();
                     updateManifestPreview();
@@ -1125,6 +1358,7 @@ CONFIG_TEMPLATE = dedent(
                     'openrouterKey',
                     'openrouterModel',
                     'metadataAddon',
+                    'catalogKeys',
                     'catalogItems',
                     'generationRetries',
                     'traktHistoryLimit',
@@ -1135,7 +1369,18 @@ CONFIG_TEMPLATE = dedent(
                 const segments = [];
                 manifestKeys.forEach((key) => {
                     const value = settings[key];
-                    if (!value) {
+                    if (value == null) {
+                        return;
+                    }
+                    if (Array.isArray(value)) {
+                        if (value.length === 0) {
+                            return;
+                        }
+                        segments.push(encodeURIComponent(key));
+                        segments.push(encodeURIComponent(value.join(',')));
+                        return;
+                    }
+                    if (value === '') {
                         return;
                     }
                     segments.push(encodeURIComponent(key));
@@ -1151,6 +1396,16 @@ CONFIG_TEMPLATE = dedent(
 
             function updateManifestPreview() {
                 manifestPreview.textContent = buildConfiguredUrl();
+            }
+
+            function syncCatalogSelectionsFromStatus() {
+                if (!profileStatus) {
+                    return;
+                }
+                const keys = Array.isArray(profileStatus.catalogKeys)
+                    ? profileStatus.catalogKeys
+                    : [];
+                applyCatalogSelection(keys, { silent: true });
             }
 
             function syncHistoryLimitFromStatus() {
@@ -1491,6 +1746,7 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
         "manifestName": settings.app_name,
         "openrouterModel": settings.openrouter_model,
         "catalogItemCount": settings.catalog_item_count,
+        "catalogKeys": list(settings.catalog_keys),
         "generationRetryLimit": settings.generation_retry_limit,
         "traktHistoryLimit": settings.trakt_history_limit,
         "refreshIntervalSeconds": settings.refresh_interval_seconds,
@@ -1503,6 +1759,15 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
         "metadataAddon": (
             str(settings.metadata_addon_url) if settings.metadata_addon_url else ""
         ),
+        "catalogDefinitions": [
+            {
+                "key": definition.key,
+                "title": definition.title,
+                "description": definition.description,
+                "contentType": definition.content_type,
+            }
+            for definition in STABLE_CATALOGS
+        ],
     }
     defaults_json = json.dumps(defaults).replace("</", "<\\/")
 

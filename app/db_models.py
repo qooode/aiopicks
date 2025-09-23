@@ -33,6 +33,7 @@ class Profile(Base):
         JSON, nullable=True
     )
     catalog_count: Mapped[int] = mapped_column(Integer, default=STABLE_CATALOG_COUNT)
+    catalog_keys: Mapped[list[str]] = mapped_column(JSON, default=list)
     catalog_item_count: Mapped[int] = mapped_column(Integer, default=8)
     generation_retry_limit: Mapped[int] = mapped_column(Integer, default=3)
     refresh_interval_seconds: Mapped[int] = mapped_column(Integer, default=43_200)
