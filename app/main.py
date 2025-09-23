@@ -306,6 +306,7 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 for value in (
                     cfg.openrouter_key,
                     cfg.openrouter_model,
+                    cfg.catalog_keys,
                     cfg.catalog_item_count,
                     cfg.refresh_interval,
                     cfg.response_cache,
@@ -364,6 +365,9 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 and state.response_cache_seconds != config.response_cache
             ):
                 return True
+            if config.catalog_keys is not None:
+                if tuple(config.catalog_keys) != state.catalog_keys:
+                    return True
             if config.metadata_addon_url is not None:
                 metadata_url = str(config.metadata_addon_url)
                 if (state.metadata_addon_url or None) != metadata_url:
