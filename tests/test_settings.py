@@ -10,22 +10,29 @@ from app.config import Settings, DEFAULT_CATALOG_KEYS
 def test_catalog_keys_subset_selection() -> None:
     """Settings should respect custom catalog key selections."""
 
-    settings = Settings(_env_file=None, CATALOG_KEYS="movies-for-you,actors-you-love")
+    settings = Settings(
+        _env_file=None, CATALOG_KEYS="movies-for-you,starring-your-favorite-actors"
+    )
 
-    assert settings.catalog_keys == ("movies-for-you", "actors-you-love")
+    assert settings.catalog_keys == (
+        "movies-for-you",
+        "starring-your-favorite-actors",
+    )
     assert settings.catalog_count == 2
     assert [definition.key for definition in settings.catalog_definitions] == [
         "movies-for-you",
-        "actors-you-love",
+        "starring-your-favorite-actors",
     ]
 
 
 def test_catalog_keys_accepts_case_insensitive_values() -> None:
     """Catalog keys should be parsed case-insensitively."""
 
-    settings = Settings(_env_file=None, CATALOG_KEYS=["Movies-For-You", "HIDDEN-GEMS"])
+    settings = Settings(
+        _env_file=None, CATALOG_KEYS=["Movies-For-You", "INTERNATIONAL PICKS"]
+    )
 
-    assert settings.catalog_keys == ("movies-for-you", "hidden-gems")
+    assert settings.catalog_keys == ("movies-for-you", "international-picks")
     assert settings.catalog_count == 2
 
 
