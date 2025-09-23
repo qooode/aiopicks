@@ -450,7 +450,7 @@ CONFIG_TEMPLATE = dedent(
     </main>
     <script>
         (function () {
-            const defaults = JSON.parse('__DEFAULTS_JSON__');
+            const defaults = __DEFAULTS_JSON__;
             const baseManifestUrl = new URL('/manifest.json', window.location.origin).toString();
             const numberFormatter = new Intl.NumberFormat();
             const openrouterKey = document.getElementById('config-openrouter-key');
