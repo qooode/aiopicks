@@ -344,20 +344,19 @@ class OpenRouterClient:
                     attempt=attempts,
                     attempt_limit=attempt_limit,
                 )
-                if not additions:
-                    break
-                self._merge_additions(
-                    catalogs,
-                    additions,
-                    exclusions=content_exclusions,
-                    session_seen=session_seen,
-                )
-                requests = self._prepare_top_up_requests(
-                    catalogs,
-                    item_limit,
-                    exclusions=content_exclusions,
-                    session_seen=session_seen,
-                )
+                if additions:
+                    self._merge_additions(
+                        catalogs,
+                        additions,
+                        exclusions=content_exclusions,
+                        session_seen=session_seen,
+                    )
+                    requests = self._prepare_top_up_requests(
+                        catalogs,
+                        item_limit,
+                        exclusions=content_exclusions,
+                        session_seen=session_seen,
+                    )
                 attempts += 1
             if requests:
                 logger.warning(
