@@ -151,6 +151,7 @@ class OpenRouterClient:
             exclusions=exclusion_map,
             max_attempts=resolved_retry_limit,
         )
+        self._enforce_session_uniqueness(bundle, exclusion_map)
         return bundle
 
     async def _generate_catalog_for_definition(
@@ -323,10 +324,12 @@ class OpenRouterClient:
         async def _fill(content_type: str, catalogs: list[Catalog]) -> None:
             attempts = 0
             content_exclusions = (exclusions or {}).get(content_type)
+            session_seen = self._build_session_seen(catalogs)
             requests = self._prepare_top_up_requests(
                 catalogs,
                 item_limit,
                 exclusions=content_exclusions,
+                session_seen=session_seen,
             )
             attempt_limit = max(0, max_attempts)
             if attempt_limit <= 0:
@@ -341,6 +344,8 @@ class OpenRouterClient:
                     api_key=api_key,
                     model=model,
                     exclusions=content_exclusions,
+                    attempt=attempts,
+                    attempt_limit=attempt_limit,
                 )
                 if not additions:
                     break
@@ -348,11 +353,13 @@ class OpenRouterClient:
                     catalogs,
                     additions,
                     exclusions=content_exclusions,
+                    session_seen=session_seen,
                 )
                 requests = self._prepare_top_up_requests(
                     catalogs,
                     item_limit,
                     exclusions=content_exclusions,
+                    session_seen=session_seen,
                 )
                 attempts += 1
             if requests:
@@ -374,6 +381,7 @@ class OpenRouterClient:
         item_limit: int,
         *,
         exclusions: dict[str, Any] | None = None,
+        session_seen: dict[tuple[str, str, int | None], str] | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Normalise catalog items and describe missing counts for top-ups."""
 
@@ -383,6 +391,7 @@ class OpenRouterClient:
                 catalog,
                 item_limit=item_limit,
                 exclusions=exclusions,
+                session_seen=session_seen,
             )
             if catalog.items != cleaned:
                 catalog.items = cleaned
@@ -400,6 +409,7 @@ class OpenRouterClient:
         additions: dict[str, list[CatalogItem]],
         *,
         exclusions: dict[str, Any] | None = None,
+        session_seen: dict[tuple[str, str, int | None], str] | None = None,
     ) -> None:
         """Append new items to catalogs, avoiding duplicates."""
 
@@ -418,7 +428,13 @@ class OpenRouterClient:
                     continue
                 if excluded and self._is_excluded(item, excluded):
                     continue
+                if session_seen is not None:
+                    owner = session_seen.get(key)
+                    if owner is not None and owner != catalog_id:
+                        continue
                 existing.add(key)
+                if session_seen is not None:
+                    session_seen[key] = catalog_id
                 catalog.items.append(item)
 
     async def _top_up_catalogs(
@@ -432,6 +448,8 @@ class OpenRouterClient:
         api_key: str,
         model: str,
         exclusions: dict[str, Any] | None = None,
+        attempt: int = 0,
+        attempt_limit: int = 1,
     ) -> dict[str, list[CatalogItem]]:
         """Ask the model for additional catalog items."""
 
@@ -454,6 +472,13 @@ class OpenRouterClient:
             ).format(limit=item_limit),
             "Deliver left-field but still on-profile choices—no repeats from earlier suggestions in this session.",
         ]
+        if attempt_limit > 0:
+            prompt_lines.append(
+                "Attempt {current} of {total}. Previous response left open slots—top them up without "
+                "recycling anything already confirmed.".format(
+                    current=attempt + 1, total=attempt_limit
+                )
+            )
         genres = profile_snapshot.get("top_genres")
         languages = profile_snapshot.get("top_languages")
         recent = profile_snapshot.get("top_titles")
@@ -513,6 +538,9 @@ class OpenRouterClient:
                 )
             else:
                 prompt_lines.append("Existing picks: (none yet)")
+            prompt_lines.append(
+                f"Currently holding {len(summaries)} selections—need {missing} more to reach {item_limit}."
+            )
             prompt_lines.append(
                 f"Provide {missing} new unique {content_type} titles."
             )
@@ -591,6 +619,7 @@ class OpenRouterClient:
         *,
         item_limit: int,
         exclusions: dict[str, Any] | None = None,
+        session_seen: dict[tuple[str, str, int | None], str] | None = None,
     ) -> tuple[list[CatalogItem], list[str], int]:
         """Remove duplicates and enforce item limits for a catalog."""
 
@@ -609,9 +638,15 @@ class OpenRouterClient:
                 continue
             if excluded and self._is_excluded(item, excluded):
                 continue
+            if session_seen is not None:
+                owner = session_seen.get(key)
+                if owner is not None and owner != catalog.id:
+                    continue
             seen.add(key)
             cleaned.append(item)
             summaries.append(self._summarise_item(item))
+            if session_seen is not None:
+                session_seen[key] = catalog.id
         if len(cleaned) > item_limit:
             cleaned = cleaned[:item_limit]
             summaries = summaries[:item_limit]
@@ -682,6 +717,45 @@ class OpenRouterClient:
                     "titles": titles[:24],
                 }
         return normalised
+
+    def _enforce_session_uniqueness(
+        self,
+        bundle: CatalogBundle,
+        exclusions: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
+        """Ensure the final bundle contains unique, unwatched items per content type."""
+
+        exclusion_map = exclusions or {}
+
+        def _clean_group(
+            catalogs: list[Catalog], content_type: str
+        ) -> None:
+            if not catalogs:
+                return
+            session_seen: dict[tuple[str, str, int | None], str] = {}
+            content_exclusions = exclusion_map.get(content_type)
+            for catalog in catalogs:
+                cleaned, _, _ = self._normalise_catalog(
+                    catalog,
+                    item_limit=len(catalog.items),
+                    exclusions=content_exclusions,
+                    session_seen=session_seen,
+                )
+                if catalog.items != cleaned:
+                    catalog.items = cleaned
+
+        _clean_group(bundle.movie_catalogs, "movie")
+        _clean_group(bundle.series_catalogs, "series")
+
+    def _build_session_seen(
+        self, catalogs: list[Catalog]
+    ) -> dict[tuple[str, str, int | None], str]:
+        seen: dict[tuple[str, str, int | None], str] = {}
+        for catalog in catalogs:
+            for item in catalog.items:
+                key = self._catalog_item_key(item)
+                seen.setdefault(key, catalog.id)
+        return seen
 
     def _is_excluded(self, item: CatalogItem, excluded: set[str]) -> bool:
         if not excluded:
