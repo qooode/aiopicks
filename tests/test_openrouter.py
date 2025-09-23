@@ -96,3 +96,35 @@ def test_normalise_catalog_skips_excluded_items() -> None:
     assert [item.title for item in cleaned] == ["Fresh Film"]
     assert summaries == ["Fresh Film (2021)"]
     assert missing == 1
+
+
+def test_render_exclusion_titles_prefers_recent_titles() -> None:
+    """Readable titles are returned when provided in exclusion payloads."""
+
+    client = _make_client()
+    exclusions = {
+        "fingerprints": {"movie:title:some film:2020"},
+        "titles": ["Seen Film (2020)", "  Extra Spaces  "],
+    }
+
+    titles = client._render_exclusion_titles(exclusions, limit=5)
+
+    assert titles == ["Seen Film (2020)", "Extra Spaces"]
+
+
+def test_render_exclusion_titles_falls_back_to_fingerprints() -> None:
+    """Fingerprints with title metadata are converted into readable labels."""
+
+    client = _make_client()
+    exclusions = {
+        "fingerprints": {
+            "movie:title:another film:2021",
+            "series:slug:some-show",
+            "movie:title:another film:2021",  # duplicates ignored
+        },
+        "titles": [],
+    }
+
+    titles = client._render_exclusion_titles(exclusions, limit=5)
+
+    assert titles == ["Another Film (2021)", "Some Show"]
