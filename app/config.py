@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Iterable, Literal
 
-from pydantic import AliasChoices, Field, HttpUrl
+from pydantic import AliasChoices, Field, HttpUrl, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .stable_catalogs import STABLE_CATALOG_COUNT
+from .stable_catalogs import (
+    STABLE_CATALOGS,
+    STABLE_CATALOG_COUNT,
+    StableCatalogDefinition,
+)
+
+
+DEFAULT_CATALOG_KEYS: tuple[str, ...] = tuple(
+    definition.key for definition in STABLE_CATALOGS
+)
 
 
 class Settings(BaseSettings):
@@ -37,10 +46,14 @@ class Settings(BaseSettings):
         default="google/gemini-2.5-flash-lite", alias="OPENROUTER_MODEL"
     )
 
+    catalog_keys: tuple[str, ...] = Field(
+        default=DEFAULT_CATALOG_KEYS,
+        alias="CATALOG_KEYS",
+    )
     catalog_count: int = Field(
         default=STABLE_CATALOG_COUNT,
         alias="CATALOG_COUNT",
-        ge=STABLE_CATALOG_COUNT,
+        ge=1,
         le=STABLE_CATALOG_COUNT,
     )
     catalog_item_count: int = Field(
@@ -79,6 +92,57 @@ class Settings(BaseSettings):
     environment: Literal["development", "production"] = Field(
         default="development", alias="ENVIRONMENT"
     )
+
+    @field_validator("catalog_keys", mode="before")
+    @classmethod
+    def _parse_catalog_keys(cls, value: object) -> tuple[str, ...]:
+        """Normalise catalog key selections from environment values."""
+
+        if value is None:
+            return DEFAULT_CATALOG_KEYS
+        if isinstance(value, str):
+            raw_values = [part.strip() for part in value.split(",")]
+        elif isinstance(value, Iterable):
+            raw_values = [str(part).strip() for part in value]
+        else:
+            raise TypeError("CATALOG_KEYS must be a string or iterable of strings")
+
+        cleaned: list[str] = []
+        for entry in raw_values:
+            if not entry:
+                continue
+            slug = entry.replace("_", "-").replace(" ", "-").lower()
+            slug = "-".join(filter(None, slug.split("-")))
+            if not slug:
+                continue
+            if slug not in DEFAULT_CATALOG_KEYS:
+                raise ValueError("Unknown catalog keys configured")
+            if slug not in cleaned:
+                cleaned.append(slug)
+        if not cleaned:
+            return DEFAULT_CATALOG_KEYS
+        return tuple(cleaned)
+
+    @model_validator(mode="after")
+    def _sync_catalog_configuration(self) -> "Settings":
+        """Ensure catalog counts mirror the configured keys."""
+
+        expected = len(self.catalog_keys)
+        if "catalog_count" in self.model_fields_set:
+            if self.catalog_count != expected:
+                raise ValueError(
+                    "CATALOG_COUNT must match the number of configured catalog keys"
+                )
+        else:
+            self.catalog_count = expected
+        return self
+
+    @property
+    def catalog_definitions(self) -> tuple[StableCatalogDefinition, ...]:
+        """Return ordered catalog lane definitions for the selected keys."""
+
+        definition_map = {definition.key: definition for definition in STABLE_CATALOGS}
+        return tuple(definition_map[key] for key in self.catalog_keys)
 
     @property
     def cinemeta_api_url(self) -> HttpUrl | None:
