@@ -7,7 +7,7 @@ from typing import cast
 
 import httpx
 
-from app.config import DEFAULT_CATALOG_KEYS, Settings
+from app.config import Settings
 from app.database import Database
 from app.db_models import CatalogRecord, Profile
 from app.models import Catalog, CatalogItem
@@ -74,7 +74,6 @@ async def _seed_stale_profile(
             openrouter_api_key="test-key",
             openrouter_model="test-model",
             catalog_count=1,
-            catalog_keys=[DEFAULT_CATALOG_KEYS[0]],
             catalog_item_count=1,
             refresh_interval_seconds=3600,
             response_cache_seconds=60,
@@ -218,7 +217,6 @@ def test_profile_status_payload_flags() -> None:
         openrouter_model="model",
         trakt_client_id=None,
         trakt_access_token=None,
-        catalog_keys=tuple(DEFAULT_CATALOG_KEYS[:3]),
         catalog_item_count=12,
         generation_retry_limit=3,
         refresh_interval_seconds=3600,
@@ -238,7 +236,6 @@ def test_profile_status_payload_flags() -> None:
     assert payload["ready"] is True
     assert payload["hasCatalogs"] is True
     assert payload["refreshing"] is False
-    assert payload["catalogKeys"] == list(base_state.catalog_keys)
 
     refreshing_status = ProfileStatus(
         state=base_state,
@@ -451,7 +448,6 @@ def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:
             openrouter_api_key="key",
             openrouter_model="model",
             catalog_count=1,
-            catalog_keys=[DEFAULT_CATALOG_KEYS[0]],
             catalog_item_count=8,
             refresh_interval_seconds=3600,
             response_cache_seconds=3600,
@@ -558,24 +554,6 @@ def test_metadata_addon_url_persisted(tmp_path) -> None:
         await database.dispose()
 
     asyncio.run(runner())
-
-
-def test_manifest_config_catalog_keys_parsed() -> None:
-    """Catalog key overrides accept both lists and comma separated strings."""
-
-    config_list = ManifestConfig.model_validate(
-        {
-            "catalogKeys": ["movies-for-you", "series-for-you"],
-        }
-    )
-    assert config_list.catalog_keys == ("movies-for-you", "series-for-you")
-
-    config_string = ManifestConfig.model_validate(
-        {
-            "catalogKeys": "movies-for-you, series-for-you",
-        }
-    )
-    assert config_string.catalog_keys == ("movies-for-you", "series-for-you")
 
 
 def test_history_limit_persisted(tmp_path) -> None:

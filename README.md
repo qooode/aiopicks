@@ -15,12 +15,10 @@ Behind the scenes the service stores catalog payloads in SQLite (or any SQLAlche
 
 ## 🎬 Current catalog line-up
 
-AIOPicks currently generates 19 fixed lanes. Movies and series are requested separately so Stremio can merge in rich metadata from Cinemeta or another compatible service you configure.
+AIOPicks currently generates 17 fixed lanes. Movies and series are requested separately so Stremio can merge in rich metadata from Cinemeta or another compatible service you configure.
 
 | Lane | Type | What the AI looks for |
 |------|------|-----------------------|
-| Movies For You | Movie | Primary personalised movie lane scoring unseen films against your genre affinity, favourite talent, and active streaks to surface the highest-propensity recommendations. |
-| Series For You | Series | Primary personalised series lane ranking in-season runs and upcoming debuts by how closely they match your binge cadence, preferred talent, and franchise momentum. |
 | Because You Watched | Series | Similar series to your recent watches, extending the moods you just binged. |
 | Your Top Genre Picks | Movie | Fresh films expanding on the genres you play most—thrillers, comedies, and more. |
 | Actors You Love | Movie | Movies headlined by the performers you return to again and again. |
@@ -41,7 +39,7 @@ AIOPicks currently generates 19 fixed lanes. Movies and series are requested sep
 
 ## ⚙️ How it works right now
 
-1. **Trakt ingestion** – The service pulls your configured amount of movie and series history (up to 10,000 entries each) together with statistics that help the UI surface watch-time totals.
+1. **Trakt ingestion** – The service pulls your configured amount of movie and series history (up to 2,000 entries each) together with statistics that help the UI surface watch-time totals.
 2. **Taste summary** – AIOPicks builds prompts summarising your favourite genres, people, and recent standouts while passing fingerprints of everything you have already logged so repeats can be filtered out.
 3. **AI generation** – Each lane is requested in parallel through OpenRouter, seeded with a random token so results rotate between refreshes while keeping the lane title stable.
 4. **Metadata enrichment** – When a Cinemeta-compatible metadata service URL is configured, missing posters, backgrounds, IDs, and release years are filled in before storing the catalogs.
@@ -50,7 +48,7 @@ AIOPicks currently generates 19 fixed lanes. Movies and series are requested sep
 
 ## 🚀 Feature highlights
 
-- **Stable discovery lanes** – A fixed manifest of 19 catalogs keeps Stremio shelves predictable while still rotating the items inside each lane.
+- **Stable discovery lanes** – A fixed manifest of 17 catalogs keeps Stremio shelves predictable while still rotating the items inside each lane.
 - **OpenRouter + Trakt intelligence** – The AI receives rich context including genre/people counters and a deduplication index so it can recommend true first-time watches.
 - **Metadata bridge** – Optional lookups against Cinemeta (or any compatible service) fill in posters, backgrounds, and canonical IDs for cleaner Stremio grids.
 - **Profile-aware config** – Manifest parameters, refresh cadence, and overrides are stored per profile in the database, and the `/config` UI lets you trigger refreshes, sign into Trakt, and copy ready-to-use manifest URLs.
@@ -72,7 +70,7 @@ AIOPicks currently generates 19 fixed lanes. Movies and series are requested sep
    - `TRAKT_CLIENT_ID`, `TRAKT_CLIENT_SECRET`, and a long-lived `TRAKT_ACCESS_TOKEN`
 3. Optional but recommended settings:
    - `OPENROUTER_MODEL` (defaults to `google/gemini-2.5-flash-lite`)
-   - `TRAKT_HISTORY_LIMIT` (default `1000`, max `10000` per type)
+   - `TRAKT_HISTORY_LIMIT` (default `1000`, max `2000` per type)
    - `CATALOG_ITEM_COUNT` (items per lane, default `8`)
    - `REFRESH_INTERVAL` (seconds between automatic refreshes, default `43200`)
    - `CACHE_TTL` (how long cached catalog responses stay valid, default `1800`)
@@ -97,7 +95,7 @@ cp .env.sample .env  # update with your keys
 uvicorn app.main:app --reload --port 3000
 ```
 
-Visit `http://localhost:3000/manifest.json` to confirm the service is live and the manifest lists all 19 catalogs. Install that URL in Stremio once your profile shows as "Ready" on the config page.
+Visit `http://localhost:3000/manifest.json` to confirm the service is live and the manifest lists all 17 catalogs. Install that URL in Stremio once your profile shows as "Ready" on the config page.
 
 ### Running tests
 
@@ -140,7 +138,7 @@ docker run -d \
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/manifest.json` | GET | Returns the manifest containing the 19 catalog lanes for the resolved profile. |
+| `/manifest.json` | GET | Returns the manifest containing the 17 catalog lanes for the resolved profile. |
 | `/catalog/{type}/{id}.json` | GET | Returns the metas array for a catalog (`type` is `movie` or `series`). |
 | `/profiles/{profile}/manifest.json` | GET | Manifest scoped to an explicit profile ID (useful for multi-user setups). |
 | `/profiles/{profile}/catalog/{type}/{id}.json` | GET | Catalog payload for a specific profile/content combination. |

@@ -313,7 +313,6 @@ def register_routes(fastapi_app: FastAPI) -> None:
                     cfg.trakt_client_id,
                     cfg.trakt_access_token,
                     cfg.metadata_addon_url,
-                    cfg.catalog_keys,
                 )
             )
 

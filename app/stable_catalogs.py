@@ -21,25 +21,6 @@ class StableCatalogDefinition:
 
 STABLE_CATALOGS: tuple[StableCatalogDefinition, ...] = (
     StableCatalogDefinition(
-        key="movies-for-you",
-        title="Movies For You",
-        description=(
-            "Primary personalised movie lane scoring unseen films against your genre affinity,"
-            " favourite talent, and active streaks to surface the highest-propensity"
-            " recommendations."
-        ),
-        content_type="movie",
-    ),
-    StableCatalogDefinition(
-        key="series-for-you",
-        title="Series For You",
-        description=(
-            "Primary personalised series lane ranking in-season runs and upcoming debuts by how"
-            " closely they match your binge cadence, preferred talent, and franchise momentum."
-        ),
-        content_type="series",
-    ),
-    StableCatalogDefinition(
         key="because-you-watched",
         title="Because You Watched",
         description="Similar series to your recent watches, extending the moods you just binged.",

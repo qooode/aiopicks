@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any
 
 import httpx
 from pydantic import ValidationError
 
 from ..config import Settings
 from ..models import Catalog, CatalogBundle, CatalogItem
-from ..stable_catalogs import StableCatalogDefinition
+from ..stable_catalogs import STABLE_CATALOGS, StableCatalogDefinition
 from ..utils import extract_json_object, slugify
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,6 @@ class OpenRouterClient:
         model: str | None = None,
         exclusions: dict[str, dict[str, Any]] | None = None,
         retry_limit: int | None = None,
-        catalog_definitions: Sequence[StableCatalogDefinition] | None = None,
     ) -> CatalogBundle:
         """Generate new catalogs using the configured model."""
 
@@ -97,10 +96,6 @@ class OpenRouterClient:
             except (TypeError, ValueError):
                 resolved_retry_limit = self._settings.generation_retry_limit
         resolved_retry_limit = max(0, min(resolved_retry_limit, 10))
-        if catalog_definitions:
-            definitions = tuple(catalog_definitions)
-        else:
-            definitions = self._settings.catalog_definitions
         tasks = [
             asyncio.create_task(
                 self._generate_catalog_for_definition(
@@ -113,14 +108,14 @@ class OpenRouterClient:
                     exclusions=(exclusion_map or {}).get(definition.content_type),
                 )
             )
-            for index, definition in enumerate(definitions)
+            for index, definition in enumerate(STABLE_CATALOGS)
         ]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
         movie_catalogs: list[Catalog] = []
         series_catalogs: list[Catalog] = []
 
-        for definition, result in zip(definitions, results):
+        for definition, result in zip(STABLE_CATALOGS, results):
             if isinstance(result, Exception):
                 logger.warning(
                     "Catalog generation failed for %s lane: %s",
