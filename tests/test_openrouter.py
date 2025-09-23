@@ -128,3 +128,30 @@ def test_render_exclusion_titles_falls_back_to_fingerprints() -> None:
     titles = client._render_exclusion_titles(exclusions, limit=5)
 
     assert titles == ["Another Film (2021)", "Some Show"]
+
+
+def test_normalise_exclusions_builds_fingerprints_from_recent_titles() -> None:
+    """Recent titles populate fallback fingerprints for duplicate blocking."""
+
+    client = _make_client()
+    exclusions = {
+        "movie": {
+            "recent_titles": ["Seen Film (2020)", " Stripped Title "]
+        },
+        "series": {
+            "recent_titles": ["Known Show"]
+        },
+    }
+
+    normalised = client._normalise_exclusions(exclusions)
+
+    movie_fps = normalised["movie"]["fingerprints"]
+    assert "movie:title:seen film" in movie_fps
+    assert "movie:title:seen film:2020" in movie_fps
+    assert "movie:slug:seen-film" in movie_fps
+    assert "movie:slug:seen-film:2020" in movie_fps
+    assert "movie:title:stripped title" in movie_fps
+
+    series_fps = normalised["series"]["fingerprints"]
+    assert "series:title:known show" in series_fps
+    assert "series:slug:known-show" in series_fps
