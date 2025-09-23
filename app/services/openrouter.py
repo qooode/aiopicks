@@ -37,6 +37,7 @@ This request focuses on the "{title}" lane:
 - Intent: {description}
 - Content type: {content_label}
 - Random seed: {seed}
+- Creative brief: Use the seed to explore a fresh corner of their taste—lean into unexpected yet fitting picks.
 
 Rules:
 1. Recommend EXACTLY {item_target} {content_label_plural} that match the lane intent and feel fresh to the viewer.
@@ -45,6 +46,8 @@ Rules:
 4. Keep every description to one crisp sentence (about 16 words) explaining why it fits the lane.
 5. Provide real release years and stay grounded in genuine productions.
 6. Set "type" to "{content_type}" for every item.
+7. Make this lineup distinct from other seeds and lanes—avoid obvious staples unless the seed demands it.
+8. Spotlight overlooked, international, or conversation-sparking choices that still align tightly with the lane brief.
 
 Respond strictly with JSON following this structure:
 {{
@@ -173,8 +176,8 @@ class OpenRouterClient:
 
         payload = {
             "model": model,
-            "temperature": 0.7,
-            "top_p": 0.8,
+            "temperature": 0.95,
+            "top_p": 0.95,
             "max_output_tokens": self._estimate_definition_token_budget(item_target),
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -449,6 +452,7 @@ class OpenRouterClient:
                 "Only supply the missing items and keep every description under "
                 "16 words."
             ).format(limit=item_limit),
+            "Deliver left-field but still on-profile choices—no repeats from earlier suggestions in this session.",
         ]
         genres = profile_snapshot.get("top_genres")
         languages = profile_snapshot.get("top_languages")

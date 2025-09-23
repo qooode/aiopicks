@@ -27,6 +27,12 @@ STABLE_CATALOGS: tuple[StableCatalogDefinition, ...] = (
         content_type="series",
     ),
     StableCatalogDefinition(
+        key="movies-for-you",
+        title="Movies For You",
+        description="Movies that represent your overall taste profile across favourite genres and moods.",
+        content_type="movie",
+    ),
+    StableCatalogDefinition(
         key="top-genre-picks",
         title="Your Top Genre Picks",
         description="Fresh films expanding on the genres you play most—thrillers, comedies, and more.",
