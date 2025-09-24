@@ -395,7 +395,7 @@ CONFIG_TEMPLATE = dedent(
                 <p class="description">Choose how many AI generated catalogs to expose and copy a ready-to-install manifest URL. Empty fields fall back to the server defaults.</p>
                 <p class="notice hidden" id="manifest-lock">Sign in with Trakt to unlock personalised manifest links.</p>
                 <div class="field">
-                    <label for="config-openrouter-key">OpenRouter API key <span class="helper">Optional – stored client side only</span></label>
+                    <label for="config-openrouter-key">OpenRouter API key <span class="helper">Required – stored client side only</span></label>
                     <input id="config-openrouter-key" type="text" placeholder="sk-or-..." autocomplete="off" spellcheck="false" />
                 </div>
                 <div class="field">
@@ -403,7 +403,7 @@ CONFIG_TEMPLATE = dedent(
                     <input id="config-openrouter-model" type="text" placeholder="google/gemini-2.5-flash-lite" />
                 </div>
                 <div class="field">
-                    <label for="config-metadata-addon">Metadata add-on URL <span class="helper">Optional – used to fetch posters and IDs</span></label>
+                    <label for="config-metadata-addon">Metadata add-on URL <span class="helper">Required – used to fetch posters and IDs</span></label>
                     <input id="config-metadata-addon" type="text" placeholder="https://example-addon.strem.fun" inputmode="url" spellcheck="false" />
                 </div>
                 <div class="field">
