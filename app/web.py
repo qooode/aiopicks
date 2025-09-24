@@ -109,6 +109,35 @@ CONFIG_TEMPLATE = dedent(
             display: grid;
             gap: 0.75rem;
         }
+        .catalog-lane-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.6rem;
+            margin-bottom: 0.9rem;
+        }
+        .catalog-lane-controls button {
+            background: var(--surface-muted);
+            border: 1px solid var(--outline);
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            letter-spacing: 0.04em;
+            padding: 0.45rem 1rem;
+            text-transform: uppercase;
+            transition: background 0.2s ease, color 0.2s ease, border 0.2s ease;
+        }
+        .catalog-lane-controls button:hover {
+            border-color: var(--outline-strong);
+            color: var(--text-primary);
+        }
+        .catalog-lane-controls button:focus-visible {
+            outline: 2px solid rgba(255, 255, 255, 0.4);
+            outline-offset: 2px;
+        }
+        .catalog-lane-controls button.active {
+            background: var(--accent);
+            border-color: transparent;
+            color: var(--accent-contrast);
+        }
         .catalog-toggle {
             display: flex;
             align-items: flex-start;
@@ -398,8 +427,13 @@ CONFIG_TEMPLATE = dedent(
                 <div class="field">
                     <label>
                         <span>Catalog lanes</span>
-                        <span class="helper">Toggle which AI lists to generate</span>
+                        <span class="helper">Toggle which AI lists to generate. Use the shortcuts to focus on movies or series.</span>
                     </label>
+                    <div class="catalog-lane-controls" id="catalog-type-presets">
+                        <button type="button" data-mode="all" class="active" aria-pressed="true">Movies &amp; series</button>
+                        <button type="button" data-mode="movie" aria-pressed="false">Movies only</button>
+                        <button type="button" data-mode="series" aria-pressed="false">Series only</button>
+                    </div>
                     <div class="catalog-lane-list" id="catalog-lane-list"></div>
                     <p class="catalog-warning hidden" id="catalog-lane-warning">Select at least one lane.</p>
                 </div>
@@ -457,6 +491,7 @@ CONFIG_TEMPLATE = dedent(
             const metadataAddonInput = document.getElementById('config-metadata-addon');
             const catalogLaneContainer = document.getElementById('catalog-lane-list');
             const catalogLaneWarning = document.getElementById('catalog-lane-warning');
+            const catalogPresetControls = document.getElementById('catalog-type-presets');
             const catalogItemsSlider = document.getElementById('config-catalog-items');
             const catalogItemsValue = document.getElementById('catalog-items-value');
             const generationRetriesSlider = document.getElementById('config-generation-retries');
@@ -503,6 +538,21 @@ CONFIG_TEMPLATE = dedent(
                 ? defaults.catalogDefinitions
                 : [];
             const catalogToggleMap = new Map();
+
+            if (catalogPresetControls) {
+                catalogPresetControls.addEventListener('click', (event) => {
+                    const target = event.target;
+                    if (!(target instanceof Element)) {
+                        return;
+                    }
+                    const button = target.closest('button[data-mode]');
+                    if (!button) {
+                        return;
+                    }
+                    event.preventDefault();
+                    applyCatalogPreset(button.dataset.mode || 'all');
+                });
+            }
 
             const profileStorageKey = 'aiopicks.profileId';
             let persistedProfileId = readStoredProfileId();
@@ -584,6 +634,95 @@ CONFIG_TEMPLATE = dedent(
                 catalogLaneWarning.classList.add('hidden');
             }
 
+            function getCatalogKeysByContentType(contentType) {
+                if (!catalogDefinitions.length) {
+                    return [];
+                }
+                return catalogDefinitions
+                    .filter((definition) => definition.contentType === contentType)
+                    .map((definition) => normaliseCatalogKey(definition.key))
+                    .filter((key) => key);
+            }
+
+            function normaliseCatalogPreset(value) {
+                if (value === 'movie' || value === 'series' || value === 'all') {
+                    return value;
+                }
+                return 'custom';
+            }
+
+            function setActiveCatalogPreset(mode) {
+                const resolved = normaliseCatalogPreset(mode);
+                if (!catalogPresetControls) {
+                    return resolved;
+                }
+                const buttons = catalogPresetControls.querySelectorAll('button[data-mode]');
+                buttons.forEach((button) => {
+                    const targetMode = button.dataset.mode || '';
+                    const isActive = targetMode === resolved;
+                    if (isActive) {
+                        button.classList.add('active');
+                    } else {
+                        button.classList.remove('active');
+                    }
+                    button.setAttribute('aria-pressed', String(isActive));
+                });
+                catalogPresetControls.dataset.activePreset = resolved;
+                return resolved;
+            }
+
+            function updateActivePresetFromSelection() {
+                const selectedKeys = new Set(getSelectedCatalogKeys());
+                if (selectedKeys.size === 0) {
+                    setActiveCatalogPreset('custom');
+                    return;
+                }
+                const allKeys = getAllCatalogKeys();
+                if (
+                    allKeys.length > 0 &&
+                    selectedKeys.size === allKeys.length &&
+                    allKeys.every((key) => selectedKeys.has(key))
+                ) {
+                    setActiveCatalogPreset('all');
+                    return;
+                }
+                const movieKeys = getCatalogKeysByContentType('movie');
+                if (
+                    movieKeys.length > 0 &&
+                    selectedKeys.size === movieKeys.length &&
+                    movieKeys.every((key) => selectedKeys.has(key))
+                ) {
+                    setActiveCatalogPreset('movie');
+                    return;
+                }
+                const seriesKeys = getCatalogKeysByContentType('series');
+                if (
+                    seriesKeys.length > 0 &&
+                    selectedKeys.size === seriesKeys.length &&
+                    seriesKeys.every((key) => selectedKeys.has(key))
+                ) {
+                    setActiveCatalogPreset('series');
+                    return;
+                }
+                setActiveCatalogPreset('custom');
+            }
+
+            function applyCatalogPreset(mode) {
+                const resolved = normaliseCatalogPreset(mode);
+                let keys;
+                if (resolved === 'movie') {
+                    keys = getCatalogKeysByContentType('movie');
+                } else if (resolved === 'series') {
+                    keys = getCatalogKeysByContentType('series');
+                } else {
+                    keys = getAllCatalogKeys();
+                }
+                applyCatalogSelection(keys);
+                markProfileDirty();
+                updateManifestPreview();
+                setActiveCatalogPreset(resolved);
+            }
+
             function renderCatalogSelectors(initialKeys = []) {
                 if (!catalogLaneContainer) {
                     return;
@@ -595,13 +734,24 @@ CONFIG_TEMPLATE = dedent(
                 );
                 catalogLaneContainer.innerHTML = '';
                 catalogToggleMap.clear();
+                if (catalogPresetControls) {
+                    if (!catalogDefinitions.length) {
+                        catalogPresetControls.classList.add('hidden');
+                    } else {
+                        catalogPresetControls.classList.remove('hidden');
+                    }
+                }
                 catalogDefinitions.forEach((definition) => {
                     const key = normaliseCatalogKey(definition.key);
                     if (!key) {
                         return;
                     }
                     const label = document.createElement('label');
-                    label.className = 'catalog-toggle';
+                    const contentType =
+                        definition.contentType === 'series' ? 'series' : 'movie';
+                    label.className = `catalog-toggle catalog-toggle--${contentType}`;
+                    label.dataset.catalogKey = key;
+                    label.dataset.contentType = contentType;
                     const checkbox = document.createElement('input');
                     checkbox.type = 'checkbox';
                     checkbox.value = key;
@@ -610,11 +760,13 @@ CONFIG_TEMPLATE = dedent(
                         if (!checkbox.checked && getSelectedCatalogKeys().length === 0) {
                             checkbox.checked = true;
                             showCatalogWarning('Select at least one lane.');
+                            updateActivePresetFromSelection();
                             return;
                         }
                         hideCatalogWarning();
                         markProfileDirty();
                         updateManifestPreview();
+                        updateActivePresetFromSelection();
                     });
                     const text = document.createElement('div');
                     text.className = 'catalog-text';
@@ -636,7 +788,11 @@ CONFIG_TEMPLATE = dedent(
                     label.appendChild(checkbox);
                     label.appendChild(text);
                     catalogLaneContainer.appendChild(label);
-                    catalogToggleMap.set(key, checkbox);
+                    catalogToggleMap.set(key, {
+                        checkbox,
+                        element: label,
+                        definition,
+                    });
                 });
             }
 
@@ -652,11 +808,11 @@ CONFIG_TEMPLATE = dedent(
                 const selection = new Set(resolved);
                 catalogDefinitions.forEach((definition) => {
                     const key = normaliseCatalogKey(definition.key);
-                    const checkbox = catalogToggleMap.get(key);
-                    if (!checkbox) {
+                    const entry = catalogToggleMap.get(key);
+                    if (!entry) {
                         return;
                     }
-                    checkbox.checked = selection.has(key);
+                    entry.checkbox.checked = selection.has(key);
                 });
                 if (!silent) {
                     hideCatalogWarning();
@@ -673,8 +829,8 @@ CONFIG_TEMPLATE = dedent(
                     if (!key) {
                         return;
                     }
-                    const checkbox = catalogToggleMap.get(key);
-                    if (checkbox && checkbox.checked) {
+                    const entry = catalogToggleMap.get(key);
+                    if (entry && entry.checkbox.checked) {
                         selected.push(key);
                     }
                 });
@@ -719,6 +875,7 @@ CONFIG_TEMPLATE = dedent(
                 : [];
             renderCatalogSelectors(defaultCatalogSelection);
             applyCatalogSelection(defaultCatalogSelection, { silent: true });
+            updateActivePresetFromSelection();
             hideCatalogWarning();
 
             openrouterModel.value = defaults.openrouterModel || '';
@@ -1405,6 +1562,8 @@ CONFIG_TEMPLATE = dedent(
                     ? profileStatus.catalogKeys
                     : [];
                 applyCatalogSelection(keys, { silent: true });
+                updateActivePresetFromSelection();
+                updateManifestPreview();
             }
 
             function syncHistoryLimitFromStatus() {
