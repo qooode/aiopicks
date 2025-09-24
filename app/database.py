@@ -64,9 +64,16 @@ class Database:
 
         _ensure_column(
             "trakt_history_limit",
-            "ALTER TABLE profiles ADD COLUMN trakt_history_limit INTEGER DEFAULT 1000",
-            "UPDATE profiles SET trakt_history_limit = 1000 WHERE trakt_history_limit IS NULL",
+            "ALTER TABLE profiles ADD COLUMN trakt_history_limit INTEGER DEFAULT 0",
+            "UPDATE profiles SET trakt_history_limit = 0 WHERE trakt_history_limit IS NULL",
         )
+        if "trakt_history_limit" in existing_columns:
+            sync_connection.execute(
+                text(
+                    "UPDATE profiles SET trakt_history_limit = 0 "
+                    "WHERE trakt_history_limit = 1000"
+                )
+            )
         _ensure_column(
             "trakt_movie_history_count",
             "ALTER TABLE profiles ADD COLUMN trakt_movie_history_count INTEGER DEFAULT 0",

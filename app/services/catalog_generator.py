@@ -87,7 +87,7 @@ class ManifestConfig(BaseModel):
     )
     trakt_history_limit: int | None = Field(
         default=None,
-        ge=10,
+        ge=0,
         le=10_000,
         validation_alias=AliasChoices("traktHistoryLimit", "historyLimit"),
     )
@@ -1694,10 +1694,13 @@ class CatalogService:
                     parts.append(f"{hours:,} hours watched")
 
         history_limit = state.trakt_history_limit
-        if isinstance(history_limit, int) and history_limit > 0:
-            parts.append(
-                f"current refresh samples the last {history_limit} plays per type"
-            )
+        if isinstance(history_limit, int):
+            if history_limit > 0:
+                parts.append(
+                    f"current refresh samples the last {history_limit} plays per type"
+                )
+            else:
+                parts.append("current refresh scans your entire play history")
 
         if not parts:
             return "Lifetime stats unavailable; lean on taste summaries above."

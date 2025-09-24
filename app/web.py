@@ -413,7 +413,7 @@ CONFIG_TEMPLATE = dedent(
                 </div>
                 <div class="field">
                     <label for="config-history-limit">History depth <span class="helper">How many recent plays to filter duplicates</span> <span class="range-value" id="history-limit-value"></span></label>
-                    <input id="config-history-limit" type="range" min="100" max="10000" step="50" />
+                    <input id="config-history-limit" type="range" min="0" max="10000" step="50" />
                 </div>
                 <div class="field">
                     <label for="config-refresh-interval">Refresh cadence <span class="helper">How often the AI rethinks the catalogs</span></label>
@@ -732,9 +732,20 @@ CONFIG_TEMPLATE = dedent(
                     : Number(generationRetriesSlider.value || 3);
             generationRetriesSlider.value = String(defaultRetryLimit);
             generationRetriesValue.textContent = generationRetriesSlider.value;
-            const resolvedHistoryLimit =
-                defaults.traktHistoryLimit || historySlider.value || historySlider.max || 1000;
-            historySlider.value = resolvedHistoryLimit;
+            const defaultHistoryLimit = Number(defaults.traktHistoryLimit);
+            let resolvedHistoryLimit;
+            if (Number.isFinite(defaultHistoryLimit)) {
+                resolvedHistoryLimit = defaultHistoryLimit;
+            } else {
+                const sliderDefault = Number(historySlider.value);
+                if (Number.isFinite(sliderDefault)) {
+                    resolvedHistoryLimit = sliderDefault;
+                } else {
+                    const sliderMax = Number(historySlider.max);
+                    resolvedHistoryLimit = Number.isFinite(sliderMax) ? sliderMax : 1000;
+                }
+            }
+            historySlider.value = String(resolvedHistoryLimit);
             historyValue.textContent = formatHistoryLimit(resolvedHistoryLimit);
             refreshSelect.value = String(defaults.refreshIntervalSeconds || refreshSelect.value);
             ensureOption(refreshSelect, refreshSelect.value, formatSeconds(Number(refreshSelect.value)));
@@ -1212,8 +1223,11 @@ CONFIG_TEMPLATE = dedent(
                         payload.generationRetries = retries;
                     }
                 }
-                if (settings.traktHistoryLimit) {
-                    payload.traktHistoryLimit = Number(settings.traktHistoryLimit);
+                if (typeof settings.traktHistoryLimit !== 'undefined') {
+                    const limit = Number(settings.traktHistoryLimit);
+                    if (Number.isFinite(limit)) {
+                        payload.traktHistoryLimit = limit;
+                    }
                 }
                 if (settings.refreshInterval) payload.refreshInterval = Number(settings.refreshInterval);
                 if (settings.cacheTtl) payload.cacheTtl = Number(settings.cacheTtl);
@@ -1474,7 +1488,7 @@ CONFIG_TEMPLATE = dedent(
             function formatHistoryLimit(value) {
                 const numeric = Number(value);
                 if (!Number.isFinite(numeric) || numeric <= 0) {
-                    return '';
+                    return 'All history';
                 }
                 return `${numberFormatter.format(Math.round(numeric))} plays`;
             }
@@ -1562,11 +1576,18 @@ CONFIG_TEMPLATE = dedent(
                 if (!totalMinutes && (movieMinutes || episodeMinutes)) {
                     totalMinutes = movieMinutes + episodeMinutes;
                 }
-                let summaryLimit = Number(profileStatus.traktHistoryLimit) || 0;
-                if (historyLimitTouched) {
-                    summaryLimit = Number(historySlider.value) || summaryLimit;
-                } else if (!summaryLimit) {
+                let summaryLimit = Number(profileStatus.traktHistoryLimit);
+                if (!Number.isFinite(summaryLimit)) {
                     summaryLimit = Number(historySlider.value);
+                }
+                if (!Number.isFinite(summaryLimit)) {
+                    summaryLimit = 0;
+                }
+                if (historyLimitTouched) {
+                    const overrideLimit = Number(historySlider.value);
+                    if (Number.isFinite(overrideLimit)) {
+                        summaryLimit = overrideLimit;
+                    }
                 }
                 const summaryParts = [];
                 if (movies > 0) {
@@ -1591,6 +1612,8 @@ CONFIG_TEMPLATE = dedent(
                 }
                 if (Number.isFinite(summaryLimit) && summaryLimit > 0) {
                     summaryMessages.push(`Filtering repeats from your latest ${numberFormatter.format(Math.round(summaryLimit))} plays.`);
+                } else {
+                    summaryMessages.push('Filtering repeats from your entire history.');
                 }
                 traktStatsSummary.textContent = summaryMessages.join(' ');
                 const refreshedAt = typeof history.refreshedAt === 'string' ? history.refreshedAt : '';

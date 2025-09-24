@@ -67,12 +67,13 @@ class TraktClient:
 
         url = f"/sync/history/{content_type}"
         resolved_limit = limit if limit is not None else self._settings.trakt_history_limit
+        target: int | None
         try:
-            target = int(resolved_limit)
+            target = int(resolved_limit) if resolved_limit is not None else None
         except (TypeError, ValueError):
-            target = self._settings.trakt_history_limit
-        if target <= 0:
-            return HistoryBatch(items=[], total=0, fetched=True)
+            target = int(self._settings.trakt_history_limit)
+        if target is not None and target <= 0:
+            target = None
 
         collected: list[dict[str, Any]] = []
         total = 0
@@ -80,8 +81,10 @@ class TraktClient:
         max_page_size = 100
         remaining = target
 
-        while remaining > 0:
-            page_limit = min(remaining, max_page_size)
+        while True:
+            page_limit = max_page_size if remaining is None else min(remaining, max_page_size)
+            if page_limit <= 0:
+                break
             params = {
                 "limit": page_limit,
                 "page": page,
@@ -110,11 +113,15 @@ class TraktClient:
             if total == 0:
                 total = self._extract_total_count(response, fallback=len(data))
 
+            if not data:
+                break
+
             collected.extend(data)
             received = len(data)
-            remaining -= received
-            if remaining <= 0:
-                break
+            if remaining is not None:
+                remaining -= received
+                if remaining <= 0:
+                    break
 
             if received < page_limit:
                 break
@@ -130,7 +137,7 @@ class TraktClient:
 
             page += 1
 
-        if len(collected) > target:
+        if target is not None and len(collected) > target:
             collected = collected[:target]
 
         return HistoryBatch(items=collected, total=total or len(collected), fetched=True)

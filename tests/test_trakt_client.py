@@ -89,6 +89,61 @@ async def test_fetch_history_paginates_until_limit() -> None:
 
 
 @pytest.mark.anyio("asyncio")
+async def test_fetch_history_collects_all_when_unbounded() -> None:
+    """A non-positive limit should trigger full pagination until Trakt is exhausted."""
+
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        page = int(request.url.params.get("page", "1"))
+        if page > 3:
+            return httpx.Response(
+                200,
+                json=[],
+                headers={
+                    "x-pagination-item-count": "300",
+                    "x-pagination-page-count": "3",
+                },
+            )
+        start = (page - 1) * 100
+        items = [
+            {
+                "id": start + index + 1,
+                "watched_at": "2024-01-01T00:00:00.000Z",
+                "type": "show",
+                "show": {
+                    "title": f"Show {start + index + 1}",
+                    "year": 2000,
+                    "ids": {
+                        "trakt": start + index + 1,
+                    },
+                },
+            }
+            for index in range(100)
+        ]
+        return httpx.Response(
+            200,
+            json=items,
+            headers={
+                "x-pagination-item-count": "300",
+                "x-pagination-page-count": "3",
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport, base_url="https://api.example.com") as http_client:
+        client = TraktClient(build_settings(), http_client)
+        batch = await client.fetch_history("shows", limit=0)
+
+    assert batch.fetched is True
+    assert len(batch.items) == 300
+    assert batch.total == 300
+    assert all(request.url.params["limit"] == "100" for request in requests)
+    assert len(requests) == 3
+
+
+@pytest.mark.anyio("asyncio")
 async def test_fetch_history_handles_error_response() -> None:
     """HTTP failures should result in an empty history payload."""
 

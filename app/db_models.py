@@ -23,7 +23,7 @@ class Profile(Base):
     openrouter_model: Mapped[str] = mapped_column(String(200))
     trakt_client_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     trakt_access_token: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    trakt_history_limit: Mapped[int] = mapped_column(Integer, default=1_000)
+    trakt_history_limit: Mapped[int] = mapped_column(Integer, default=0)
     trakt_movie_history_count: Mapped[int] = mapped_column(Integer, default=0)
     trakt_show_history_count: Mapped[int] = mapped_column(Integer, default=0)
     trakt_history_refreshed_at: Mapped[datetime | None] = mapped_column(
