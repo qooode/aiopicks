@@ -412,8 +412,8 @@ CONFIG_TEMPLATE = dedent(
                     <input id="config-generation-retries" type="range" min="0" max="10" step="1" />
                 </div>
                 <div class="field">
-                    <label for="config-history-limit">History depth <span class="helper">How many recent plays to filter duplicates</span> <span class="range-value" id="history-limit-value"></span></label>
-                    <input id="config-history-limit" type="range" min="0" max="10000" step="50" />
+                    <label for="config-history-limit">History depth <span class="helper">All history is always used to filter duplicates</span> <span class="range-value" id="history-limit-value">All history</span></label>
+                    <input id="config-history-limit" type="hidden" value="0" />
                 </div>
                 <div class="field">
                     <label for="config-refresh-interval">Refresh cadence <span class="helper">How often the AI rethinks the catalogs</span></label>
@@ -732,19 +732,7 @@ CONFIG_TEMPLATE = dedent(
                     : Number(generationRetriesSlider.value || 3);
             generationRetriesSlider.value = String(defaultRetryLimit);
             generationRetriesValue.textContent = generationRetriesSlider.value;
-            const defaultHistoryLimit = Number(defaults.traktHistoryLimit);
-            let resolvedHistoryLimit;
-            if (Number.isFinite(defaultHistoryLimit)) {
-                resolvedHistoryLimit = defaultHistoryLimit;
-            } else {
-                const sliderDefault = Number(historySlider.value);
-                if (Number.isFinite(sliderDefault)) {
-                    resolvedHistoryLimit = sliderDefault;
-                } else {
-                    const sliderMax = Number(historySlider.max);
-                    resolvedHistoryLimit = Number.isFinite(sliderMax) ? sliderMax : 1000;
-                }
-            }
+            const resolvedHistoryLimit = 0;
             historySlider.value = String(resolvedHistoryLimit);
             historyValue.textContent = formatHistoryLimit(resolvedHistoryLimit);
             refreshSelect.value = String(defaults.refreshIntervalSeconds || refreshSelect.value);
@@ -782,13 +770,15 @@ CONFIG_TEMPLATE = dedent(
                 markProfileDirty();
                 updateManifestPreview();
             });
-            historySlider.addEventListener('input', () => {
-                historyLimitTouched = true;
-                historyValue.textContent = formatHistoryLimit(historySlider.value);
-                markProfileDirty();
-                updateManifestPreview();
-                updateTraktStats();
-            });
+            if (historySlider.type === 'range') {
+                historySlider.addEventListener('input', () => {
+                    historyLimitTouched = true;
+                    historyValue.textContent = formatHistoryLimit(historySlider.value);
+                    markProfileDirty();
+                    updateManifestPreview();
+                    updateTraktStats();
+                });
+            }
             openrouterModel.addEventListener('input', () => {
                 markProfileDirty();
                 updateManifestPreview();
@@ -1425,19 +1415,9 @@ CONFIG_TEMPLATE = dedent(
                 if (!profileStatus) {
                     return;
                 }
-                const limit = Number(profileStatus.traktHistoryLimit);
-                if (!Number.isFinite(limit) || limit <= 0) {
-                    return;
-                }
-                const currentValue = Number(historySlider.value);
-                if (historyLimitTouched && currentValue !== limit) {
-                    return;
-                }
                 historyLimitTouched = false;
-                if (currentValue !== limit) {
-                    historySlider.value = String(limit);
-                }
-                historyValue.textContent = formatHistoryLimit(limit);
+                historySlider.value = '0';
+                historyValue.textContent = formatHistoryLimit(0);
             }
 
             function syncGenerationRetriesFromStatus() {
@@ -1576,16 +1556,10 @@ CONFIG_TEMPLATE = dedent(
                 if (!totalMinutes && (movieMinutes || episodeMinutes)) {
                     totalMinutes = movieMinutes + episodeMinutes;
                 }
-                let summaryLimit = Number(profileStatus.traktHistoryLimit);
-                if (!Number.isFinite(summaryLimit)) {
-                    summaryLimit = Number(historySlider.value);
-                }
-                if (!Number.isFinite(summaryLimit)) {
-                    summaryLimit = 0;
-                }
+                let summaryLimit = 0;
                 if (historyLimitTouched) {
                     const overrideLimit = Number(historySlider.value);
-                    if (Number.isFinite(overrideLimit)) {
+                    if (Number.isFinite(overrideLimit) && overrideLimit > 0) {
                         summaryLimit = overrideLimit;
                     }
                 }
