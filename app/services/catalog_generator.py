@@ -513,6 +513,53 @@ class CatalogService:
             show_batch=show_history_batch,
         )
 
+        desired_history_limit = self._resolve_history_limit(
+            state.trakt_history_limit,
+            movie_total,
+            show_total,
+        )
+
+        if desired_history_limit != state.trakt_history_limit:
+            logger.info(
+                "Expanding Trakt history window for profile %s from %s to %s entries",
+                state.id,
+                state.trakt_history_limit,
+                desired_history_limit,
+            )
+            state.trakt_history_limit = desired_history_limit
+            if (
+                len(movie_history) < desired_history_limit
+                or len(show_history) < desired_history_limit
+            ):
+                movie_history_batch, show_history_batch = await asyncio.gather(
+                    self._trakt.fetch_history(
+                        "movies",
+                        client_id=state.trakt_client_id,
+                        access_token=state.trakt_access_token,
+                        limit=desired_history_limit,
+                    ),
+                    self._trakt.fetch_history(
+                        "shows",
+                        client_id=state.trakt_client_id,
+                        access_token=state.trakt_access_token,
+                        limit=desired_history_limit,
+                    ),
+                )
+                movie_history = movie_history_batch.items
+                show_history = show_history_batch.items
+                if movie_history_batch.fetched:
+                    movie_total = self._max_int(
+                        movie_total,
+                        movie_history_batch.total,
+                        len(movie_history),
+                    )
+                if show_history_batch.fetched:
+                    show_total = self._max_int(
+                        show_total,
+                        show_history_batch.total,
+                        len(show_history),
+                    )
+
         await self._store_trakt_history_stats(
             state,
             history_limit=state.trakt_history_limit,
@@ -705,11 +752,17 @@ class CatalogService:
         )
         if stats:
             movie_watched = self._extract_trakt_watched(stats, "movies")
+            movie_plays = self._extract_trakt_metric(stats, "movies", "plays")
             show_watched = self._extract_trakt_watched(stats, "shows")
-            if movie_watched is not None:
-                movie_total = movie_watched
-            if show_watched is not None:
-                show_total = show_watched
+            episode_watched = self._extract_trakt_watched(stats, "episodes")
+            episode_plays = self._extract_trakt_metric(stats, "episodes", "plays")
+            movie_total = self._max_int(movie_total, movie_watched, movie_plays)
+            show_total = self._max_int(
+                show_total,
+                show_watched,
+                episode_watched,
+                episode_plays,
+            )
             snapshot_data = self._build_trakt_history_snapshot(stats)
             if snapshot_data:
                 snapshot = snapshot_data
@@ -782,17 +835,55 @@ class CatalogService:
                 await session.commit()
 
     @staticmethod
-    def _extract_trakt_watched(
-        stats: Mapping[str, Any], section: str
+    def _extract_trakt_metric(
+        stats: Mapping[str, Any], section: str, key: str
     ) -> int | None:
-        """Extract the watched counter for a given stats section."""
+        """Extract a numeric metric from a nested Trakt stats section."""
 
         segment = stats.get(section)
         if isinstance(segment, Mapping):
-            value = segment.get("watched")
+            value = segment.get(key)
             if isinstance(value, int) and value >= 0:
                 return value
         return None
+
+    @classmethod
+    def _extract_trakt_watched(
+        cls, stats: Mapping[str, Any], section: str
+    ) -> int | None:
+        """Extract the watched counter for a given stats section."""
+
+        return cls._extract_trakt_metric(stats, section, "watched")
+
+    @staticmethod
+    def _max_int(*values: int | None) -> int | None:
+        """Return the largest non-negative integer from the provided values."""
+
+        numeric = [value for value in values if isinstance(value, int) and value >= 0]
+        if not numeric:
+            return None
+        return max(numeric)
+
+    def _resolve_history_limit(
+        self,
+        current_limit: int,
+        movie_total: int | None,
+        show_total: int | None,
+    ) -> int:
+        """Determine how many history entries are needed to avoid repeats."""
+
+        cap = 10_000
+        minimum = 10
+        candidates = [current_limit]
+        for candidate in (movie_total, show_total):
+            if isinstance(candidate, int) and candidate >= 0:
+                candidates.append(candidate)
+        resolved = max(candidates) if candidates else current_limit
+        if resolved < minimum:
+            resolved = minimum
+        if resolved > cap:
+            resolved = cap
+        return resolved
 
     @staticmethod
     def _build_trakt_history_snapshot(stats: Mapping[str, Any]) -> dict[str, Any]:
