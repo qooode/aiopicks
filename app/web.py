@@ -325,6 +325,17 @@ CONFIG_TEMPLATE = dedent(
         .hidden {
             display: none !important;
         }
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
         @keyframes spin {
             0% {
                 transform: rotate(0deg);
@@ -412,7 +423,11 @@ CONFIG_TEMPLATE = dedent(
                     <input id="config-generation-retries" type="range" min="0" max="10" step="1" />
                 </div>
                 <div class="field">
-                    <label for="config-history-limit">History depth <span class="helper">All history is always used to filter duplicates</span> <span class="range-value" id="history-limit-value">All history</span></label>
+                    <label for="config-history-limit">
+                        <span class="sr-only">History depth</span>
+                        <span class="helper sr-only">All history is always used to filter duplicates</span>
+                        <span class="range-value sr-only" id="history-limit-value">All history</span>
+                    </label>
                     <input id="config-history-limit" type="hidden" value="0" />
                 </div>
                 <div class="field">
