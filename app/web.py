@@ -56,6 +56,47 @@ CONFIG_TEMPLATE = dedent(
             text-align: center;
             margin-bottom: 2.5rem;
         }
+        .fusion-banner {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.75rem;
+            background: linear-gradient(135deg, #3f2b96, #a8c0ff);
+            border-radius: 999px;
+            padding: 0.55rem 1.2rem;
+            font-size: 0.95rem;
+            color: #ffffff;
+            margin: 0 auto 1.75rem;
+            box-shadow: 0 20px 35px -18px rgba(63, 43, 150, 0.8);
+        }
+        .fusion-banner span {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+        }
+        .fusion-banner span strong {
+            font-weight: 700;
+        }
+        .fusion-banner a {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-weight: 700;
+            color: inherit;
+            text-decoration: none;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .fusion-banner a:hover {
+            text-decoration: underline;
+            text-decoration-color: currentColor;
+        }
+        .fusion-banner svg {
+            width: 1rem;
+            height: 1rem;
+            fill: currentColor;
+        }
         header h1 {
             margin-bottom: 0.5rem;
             font-size: clamp(2rem, 5vw, 3rem);
@@ -361,6 +402,15 @@ CONFIG_TEMPLATE = dedent(
     <body>
         <main>
             <header>
+            <div class="fusion-banner" role="note">
+                <span><strong>Hosted by Fusion.</strong> Stay in the loop.</span>
+                <a href="https://discord.gg/fusionapp" target="_blank" rel="noreferrer noopener">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M20.317 4.37a19.8 19.8 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.444.864-.608 1.25-1.844-.276-3.68-.276-5.486 0-.164-.403-.42-.875-.63-1.25a.077.077 0 0 0-.079-.037c-1.694.3-3.337.83-4.885 1.515a.07.07 0 0 0-.032.027C2.164 9.046 1.43 13.58 1.825 18.065a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.036.078.078 0 0 0 .084-.027c.46-.63.873-1.295 1.226-1.994a.076.076 0 0 0-.041-.106c-.652-.247-1.274-.544-1.872-.884a.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.197.373.292a.077.077 0 0 1-.006.128 12.3 12.3 0 0 1-1.873.883.076.076 0 0 0-.04.107c.36.698.773 1.363 1.225 1.993a.077.077 0 0 0 .084.028 19.88 19.88 0 0 0 6.002-3.037.077.077 0 0 0 .03-.055c.5-5.177-.837-9.674-3.548-13.667a.062.062 0 0 0-.031-.028ZM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.175 1.096 2.157 2.419 0 1.334-.955 2.419-2.157 2.419Zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.954-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.419 0 1.334-.947 2.419-2.157 2.419Z" />
+                    </svg>
+                    Join the Fusion Discord
+                </a>
+            </div>
             <p class="pill">Stremio Add-on</p>
             <h1>Configure __APP_NAME__</h1>
             <p>Connect your Trakt account, dial in the catalog cadence, and copy an install-ready link for Stremio.</p>
