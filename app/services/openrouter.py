@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from datetime import datetime
@@ -403,6 +404,10 @@ class OpenRouterClient:
                     "catalog": catalog,
                     "missing": missing,
                     "summaries": summaries,
+                    "confirmed_items": [
+                        item.model_dump(mode="json", exclude_none=True)
+                        for item in cleaned
+                    ],
                 }
         return requests
 
@@ -523,18 +528,23 @@ class OpenRouterClient:
         for catalog_id, info in requests.items():
             catalog: Catalog = info["catalog"]
             summaries: list[str] = info.get("summaries", [])
+            confirmed = info.get("confirmed_items") or []
             missing = info.get("missing", 0)
             prompt_lines.append("")
             prompt_lines.append(f"Catalog ID: {catalog_id}")
             prompt_lines.append(f"Title: {catalog.title}")
             if catalog.description:
                 prompt_lines.append(f"Description: {catalog.description}")
+            prompt_lines.append(
+                "Confirmed lineup so far (preserve these entries and extend the list):"
+            )
+            prompt_lines.append(json.dumps(confirmed, ensure_ascii=False, indent=2))
             if summaries:
                 prompt_lines.append(
-                    "Existing picks: " + "; ".join(summaries)
+                    "Existing picks (titles for quick reference): " + "; ".join(summaries)
                 )
             else:
-                prompt_lines.append("Existing picks: (none yet)")
+                prompt_lines.append("Existing picks (titles for quick reference): (none yet)")
             prompt_lines.append(
                 f"Currently holding {len(summaries)} selections—need {missing} more to reach {item_limit}."
             )
