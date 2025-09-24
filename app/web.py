@@ -20,18 +20,20 @@ CONFIG_TEMPLATE = dedent(
     <title>__APP_NAME__ · Configuration</title>
     <style>
         :root {
-            color-scheme: dark;
+            color-scheme: light;
             font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-            --surface: #141414;
-            --surface-muted: #090909;
-            --surface-strong: #1f1f1f;
-            --text-primary: #f5f5f5;
-            --text-muted: #a6a6a6;
-            --outline: #1c1c1c;
-            --outline-strong: #2b2b2b;
-            --accent: #f0f0f0;
-            --accent-contrast: #050505;
-            background: #000000;
+            --surface: rgba(255, 255, 255, 0.92);
+            --surface-muted: rgba(244, 247, 255, 0.85);
+            --surface-strong: rgba(223, 232, 255, 0.8);
+            --text-primary: #17213a;
+            --text-muted: #5b6a86;
+            --outline: rgba(162, 182, 224, 0.55);
+            --outline-strong: rgba(113, 140, 201, 0.8);
+            --accent: #5f7dff;
+            --accent-soft: #81a2ff;
+            --accent-gradient: linear-gradient(135deg, var(--accent), var(--accent-soft));
+            --accent-contrast: #ffffff;
+            background: linear-gradient(160deg, #f1f5ff 0%, #ffffff 35%, #fef7ff 100%);
             color: var(--text-primary);
         }
         * {
@@ -40,12 +42,15 @@ CONFIG_TEMPLATE = dedent(
         body {
             margin: 0;
             min-height: 100vh;
-            background: #000000;
+            background: radial-gradient(circle at 10% 10%, rgba(184, 204, 255, 0.28), transparent 45%),
+                radial-gradient(circle at 90% 15%, rgba(255, 206, 255, 0.35), transparent 50%),
+                linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(244, 248, 255, 0.9));
         }
         a {
-            color: inherit;
+            color: #4a5ed1;
             text-decoration: underline;
-            text-decoration-color: var(--outline-strong);
+            text-decoration-color: rgba(106, 131, 209, 0.45);
+            text-underline-offset: 4px;
         }
         main {
             max-width: 960px;
@@ -60,13 +65,13 @@ CONFIG_TEMPLATE = dedent(
             display: inline-flex;
             align-items: center;
             gap: 0.75rem;
-            background: linear-gradient(135deg, #3f2b96, #a8c0ff);
+            background: linear-gradient(135deg, rgba(119, 150, 255, 0.95), rgba(177, 198, 255, 0.9));
             border-radius: 999px;
-            padding: 0.55rem 1.2rem;
+            padding: 0.6rem 1.4rem;
             font-size: 0.95rem;
-            color: #ffffff;
+            color: #0f1d3d;
             margin: 0 auto 1.75rem;
-            box-shadow: 0 20px 35px -18px rgba(63, 43, 150, 0.8);
+            box-shadow: 0 25px 45px -30px rgba(56, 82, 163, 0.55);
         }
         .fusion-banner span {
             display: inline-flex;
@@ -77,6 +82,7 @@ CONFIG_TEMPLATE = dedent(
         }
         .fusion-banner span strong {
             font-weight: 700;
+            color: #0b1640;
         }
         .fusion-banner a {
             display: inline-flex;
@@ -101,11 +107,14 @@ CONFIG_TEMPLATE = dedent(
             margin-bottom: 0.5rem;
             font-size: clamp(2rem, 5vw, 3rem);
             letter-spacing: -0.03em;
+            color: #0f1c3c;
         }
         header p {
             margin: 0 auto;
             max-width: 640px;
             color: var(--text-muted);
+            font-size: 1rem;
+            line-height: 1.6;
         }
         .grid {
             display: grid;
@@ -114,10 +123,10 @@ CONFIG_TEMPLATE = dedent(
         .card {
             background: var(--surface);
             border: 1px solid var(--outline);
-            border-radius: 20px;
-            padding: 1.75rem;
-            box-shadow: 0 24px 40px -28px rgba(0, 0, 0, 0.65);
-            backdrop-filter: blur(10px);
+            border-radius: 22px;
+            padding: 1.85rem;
+            box-shadow: 0 30px 60px -40px rgba(57, 83, 173, 0.45);
+            backdrop-filter: blur(14px);
         }
         .card h2 {
             margin-top: 0;
@@ -155,14 +164,16 @@ CONFIG_TEMPLATE = dedent(
             align-items: flex-start;
             gap: 0.6rem;
             padding: 0.75rem 0.85rem 0.75rem 0.4rem;
-            border-radius: 16px;
+            border-radius: 18px;
             border: 1px solid var(--outline);
-            background: var(--surface-muted);
-            transition: border 0.2s ease, background 0.2s ease;
+            background: rgba(255, 255, 255, 0.85);
+            transition: border 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
             cursor: pointer;
         }
         .catalog-toggle:hover {
             border-color: var(--outline-strong);
+            background: rgba(255, 255, 255, 0.95);
+            box-shadow: 0 12px 20px -18px rgba(93, 120, 209, 0.55);
         }
         .catalog-toggle input[type="checkbox"] {
             margin-top: 0.35rem;
@@ -204,7 +215,7 @@ CONFIG_TEMPLATE = dedent(
         input[type="text"],
         select {
             width: 100%;
-            background: var(--surface-muted);
+            background: rgba(255, 255, 255, 0.9);
             border: 1px solid var(--outline);
             border-radius: 12px;
             color: var(--text-primary);
@@ -216,8 +227,8 @@ CONFIG_TEMPLATE = dedent(
         select:focus {
             outline: none;
             border-color: var(--outline-strong);
-            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
-            background: var(--surface);
+            box-shadow: 0 0 0 4px rgba(111, 138, 214, 0.22);
+            background: rgba(255, 255, 255, 0.98);
         }
         input[type="range"] {
             width: 100%;
@@ -237,7 +248,7 @@ CONFIG_TEMPLATE = dedent(
             border: none;
             border-radius: 999px;
             padding: 0.65rem 1.35rem;
-            background: var(--accent);
+            background: var(--accent-gradient);
             color: var(--accent-contrast);
             font-weight: 600;
             font-size: 0.95rem;
@@ -249,9 +260,13 @@ CONFIG_TEMPLATE = dedent(
             gap: 0.6rem;
         }
         button.secondary {
-            background: transparent;
+            background: rgba(255, 255, 255, 0.6);
             color: var(--text-primary);
             border: 1px solid var(--outline-strong);
+            backdrop-filter: blur(6px);
+        }
+        button.secondary:hover:not(:disabled) {
+            filter: brightness(1.05);
         }
         button.loading {
             cursor: progress;
@@ -268,12 +283,14 @@ CONFIG_TEMPLATE = dedent(
         }
         button:hover:not(:disabled) {
             transform: translateY(-1px);
-            box-shadow: 0 12px 24px -18px rgba(0, 0, 0, 0.65);
+            box-shadow: 0 18px 28px -20px rgba(92, 119, 209, 0.6);
+            filter: brightness(1.02);
         }
         button:disabled {
             cursor: not-allowed;
             opacity: 0.6;
             box-shadow: none;
+            filter: grayscale(0.2);
         }
         .muted {
             font-size: 0.85rem;
@@ -281,10 +298,10 @@ CONFIG_TEMPLATE = dedent(
         }
         .notice {
             margin-bottom: 1rem;
-            padding: 0.75rem 1rem;
-            border-radius: 14px;
-            background: var(--surface-muted);
-            border: 1px dashed var(--outline);
+            padding: 0.85rem 1.1rem;
+            border-radius: 16px;
+            background: rgba(237, 242, 255, 0.85);
+            border: 1px dashed rgba(132, 159, 222, 0.55);
             color: var(--text-primary);
         }
         .status {
@@ -292,23 +309,23 @@ CONFIG_TEMPLATE = dedent(
             font-size: 0.95rem;
             color: var(--text-primary);
             min-height: 1.2em;
-            padding: 0.4rem 0.6rem;
-            border-radius: 10px;
-            background: transparent;
+            padding: 0.5rem 0.75rem;
+            border-radius: 12px;
+            background: rgba(237, 242, 255, 0.75);
         }
         .status.error {
-            background: var(--surface-muted);
-            border-left: 4px solid var(--outline-strong);
+            background: rgba(255, 235, 240, 0.8);
+            border-left: 4px solid rgba(219, 116, 140, 0.7);
         }
         .status.success {
-            background: var(--surface-muted);
-            border-left: 4px solid var(--outline);
+            background: rgba(232, 248, 244, 0.8);
+            border-left: 4px solid rgba(110, 192, 169, 0.7);
         }
         .stats-block {
             margin-top: 1.25rem;
-            padding: 1rem 1.25rem;
-            border-radius: 16px;
-            background: var(--surface-muted);
+            padding: 1.1rem 1.35rem;
+            border-radius: 18px;
+            background: rgba(244, 247, 255, 0.85);
             border: 1px solid var(--outline);
         }
         .stats-grid {
@@ -339,9 +356,9 @@ CONFIG_TEMPLATE = dedent(
             color: var(--text-muted);
         }
         .preview {
-            background: var(--surface-muted);
+            background: rgba(250, 252, 255, 0.85);
             border: 1px dashed var(--outline);
-            border-radius: 14px;
+            border-radius: 16px;
             padding: 0.9rem 1rem;
             margin-top: 1rem;
             font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
@@ -353,13 +370,13 @@ CONFIG_TEMPLATE = dedent(
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            background: var(--surface-muted);
-            border: 1px solid var(--outline);
+            background: rgba(232, 238, 255, 0.8);
+            border: 1px solid rgba(161, 183, 233, 0.65);
             border-radius: 999px;
-            padding: 0.35rem 0.75rem;
+            padding: 0.4rem 0.9rem;
             font-size: 0.85rem;
             font-weight: 600;
-            color: var(--text-muted);
+            color: #2c3a5e;
             letter-spacing: 0.05em;
             text-transform: uppercase;
         }
@@ -403,7 +420,7 @@ CONFIG_TEMPLATE = dedent(
         <main>
             <header>
             <div class="fusion-banner" role="note">
-                <span><strong>Hosted by Fusion.</strong> Stay in the loop.</span>
+                <span><strong>Fusion’s add-on.</strong> Hosted by Fusion.</span>
                 <a href="https://discord.gg/fusionapp" target="_blank" rel="noreferrer noopener">
                     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                         <path d="M20.317 4.37a19.8 19.8 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.444.864-.608 1.25-1.844-.276-3.68-.276-5.486 0-.164-.403-.42-.875-.63-1.25a.077.077 0 0 0-.079-.037c-1.694.3-3.337.83-4.885 1.515a.07.07 0 0 0-.032.027C2.164 9.046 1.43 13.58 1.825 18.065a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.036.078.078 0 0 0 .084-.027c.46-.63.873-1.295 1.226-1.994a.076.076 0 0 0-.041-.106c-.652-.247-1.274-.544-1.872-.884a.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.197.373.292a.077.077 0 0 1-.006.128 12.3 12.3 0 0 1-1.873.883.076.076 0 0 0-.04.107c.36.698.773 1.363 1.225 1.993a.077.077 0 0 0 .084.028 19.88 19.88 0 0 0 6.002-3.037.077.077 0 0 0 .03-.055c.5-5.177-.837-9.674-3.548-13.667a.062.062 0 0 0-.031-.028ZM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.175 1.096 2.157 2.419 0 1.334-.955 2.419-2.157 2.419Zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.954-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.419 0 1.334-.947 2.419-2.157 2.419Z" />
