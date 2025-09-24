@@ -427,7 +427,7 @@ CONFIG_TEMPLATE = dedent(
                 <div class="field">
                     <label>
                         <span>Catalog lanes</span>
-                        <span class="helper">Toggle which AI lists to generate. Use the shortcuts to focus on movies or series.</span>
+                        <span class="helper">Toggle which AI lists to generate. Checked lanes are the ones the AI refreshes, and the shortcuts help you focus on movies or series.</span>
                     </label>
                     <div class="catalog-lane-controls" id="catalog-type-presets">
                         <button type="button" data-mode="all" class="active" aria-pressed="true">Movies &amp; series</button>
@@ -534,6 +534,7 @@ CONFIG_TEMPLATE = dedent(
             let preparePending = false;
             let profileStatus = null;
             let statusPollTimer = null;
+            let catalogLaneFilter = 'all';
             const catalogDefinitions = Array.isArray(defaults.catalogDefinitions)
                 ? defaults.catalogDefinitions
                 : [];
@@ -651,60 +652,117 @@ CONFIG_TEMPLATE = dedent(
                 return 'custom';
             }
 
+            function applyCatalogLaneVisibility(mode) {
+                if (!catalogToggleMap.size) {
+                    return;
+                }
+                const resolved = normaliseCatalogPreset(mode);
+                const filter = resolved === 'movie' || resolved === 'series' ? resolved : 'all';
+                catalogToggleMap.forEach((entry) => {
+                    if (!entry || !entry.element) {
+                        return;
+                    }
+                    const element = entry.element;
+                    const contentType = element.dataset.contentType || 'movie';
+                    if (filter === 'movie' || filter === 'series') {
+                        if (contentType === filter) {
+                            element.classList.remove('hidden');
+                        } else {
+                            element.classList.add('hidden');
+                        }
+                    } else {
+                        element.classList.remove('hidden');
+                    }
+                });
+            }
+
             function setActiveCatalogPreset(mode) {
                 const resolved = normaliseCatalogPreset(mode);
-                if (!catalogPresetControls) {
-                    return resolved;
+                if (catalogPresetControls) {
+                    const buttons = catalogPresetControls.querySelectorAll('button[data-mode]');
+                    buttons.forEach((button) => {
+                        const targetMode = button.dataset.mode || '';
+                        const isActive = targetMode === resolved;
+                        if (isActive) {
+                            button.classList.add('active');
+                        } else {
+                            button.classList.remove('active');
+                        }
+                        button.setAttribute('aria-pressed', String(isActive));
+                    });
+                    catalogPresetControls.dataset.activePreset = resolved;
                 }
-                const buttons = catalogPresetControls.querySelectorAll('button[data-mode]');
-                buttons.forEach((button) => {
-                    const targetMode = button.dataset.mode || '';
-                    const isActive = targetMode === resolved;
-                    if (isActive) {
-                        button.classList.add('active');
-                    } else {
-                        button.classList.remove('active');
-                    }
-                    button.setAttribute('aria-pressed', String(isActive));
-                });
-                catalogPresetControls.dataset.activePreset = resolved;
                 return resolved;
+            }
+
+            function setCatalogLaneFilter(mode) {
+                const resolved = normaliseCatalogPreset(mode);
+                if (resolved === 'movie' || resolved === 'series') {
+                    catalogLaneFilter = resolved;
+                } else {
+                    catalogLaneFilter = 'all';
+                }
+                applyCatalogLaneVisibility(catalogLaneFilter);
+                return catalogLaneFilter;
+            }
+
+            function resolveSelectedCatalogFilter(selectedKeys) {
+                const keys = Array.isArray(selectedKeys)
+                    ? selectedKeys
+                    : getSelectedCatalogKeys();
+                if (!keys.length) {
+                    return 'all';
+                }
+                let hasMovie = false;
+                let hasSeries = false;
+                keys.forEach((key) => {
+                    const entry = catalogToggleMap.get(key);
+                    const contentType = entry && entry.definition && entry.definition.contentType;
+                    if (contentType === 'series') {
+                        hasSeries = true;
+                    } else {
+                        hasMovie = true;
+                    }
+                });
+                if (hasMovie && !hasSeries) {
+                    return 'movie';
+                }
+                if (hasSeries && !hasMovie) {
+                    return 'series';
+                }
+                return 'all';
             }
 
             function updateActivePresetFromSelection() {
                 const selectedKeys = new Set(getSelectedCatalogKeys());
                 if (selectedKeys.size === 0) {
                     setActiveCatalogPreset('custom');
+                    setCatalogLaneFilter('all');
                     return;
                 }
                 const allKeys = getAllCatalogKeys();
+                const filterMode = resolveSelectedCatalogFilter([...selectedKeys]);
                 if (
                     allKeys.length > 0 &&
                     selectedKeys.size === allKeys.length &&
                     allKeys.every((key) => selectedKeys.has(key))
                 ) {
                     setActiveCatalogPreset('all');
+                    setCatalogLaneFilter('all');
                     return;
                 }
-                const movieKeys = getCatalogKeysByContentType('movie');
-                if (
-                    movieKeys.length > 0 &&
-                    selectedKeys.size === movieKeys.length &&
-                    movieKeys.every((key) => selectedKeys.has(key))
-                ) {
+                if (filterMode === 'movie') {
                     setActiveCatalogPreset('movie');
+                    setCatalogLaneFilter('movie');
                     return;
                 }
-                const seriesKeys = getCatalogKeysByContentType('series');
-                if (
-                    seriesKeys.length > 0 &&
-                    selectedKeys.size === seriesKeys.length &&
-                    seriesKeys.every((key) => selectedKeys.has(key))
-                ) {
+                if (filterMode === 'series') {
                     setActiveCatalogPreset('series');
+                    setCatalogLaneFilter('series');
                     return;
                 }
                 setActiveCatalogPreset('custom');
+                setCatalogLaneFilter('all');
             }
 
             function applyCatalogPreset(mode) {
@@ -721,6 +779,7 @@ CONFIG_TEMPLATE = dedent(
                 markProfileDirty();
                 updateManifestPreview();
                 setActiveCatalogPreset(resolved);
+                setCatalogLaneFilter(resolved);
             }
 
             function renderCatalogSelectors(initialKeys = []) {
@@ -794,6 +853,7 @@ CONFIG_TEMPLATE = dedent(
                         definition,
                     });
                 });
+                applyCatalogLaneVisibility(catalogLaneFilter);
             }
 
             function applyCatalogSelection(keys, options = {}) {
