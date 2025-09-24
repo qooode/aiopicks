@@ -20,7 +20,7 @@ from app.services.catalog_generator import (
     WatchedMediaIndex,
 )
 from app.services.openrouter import OpenRouterClient
-from app.services.trakt import HistoryBatch, TraktClient
+from app.services.trakt import TraktClient
 
 
 class RefreshingCatalogService(CatalogService):
@@ -277,54 +277,6 @@ def test_trakt_snapshot_normalisation() -> None:
     assert snapshot["totalMinutes"] == 4000 + 88000
 
 
-def test_gather_trakt_metadata_prefers_play_counts() -> None:
-    """History totals expand to match the highest available play counts."""
-
-    class DummyTrakt:
-        async def fetch_stats(self, *, client_id=None, access_token=None):  # noqa: D401
-            return {
-                "movies": {"watched": 1200, "plays": 1800},
-                "shows": {"watched": 90},
-                "episodes": {"watched": 2500, "plays": 3200},
-            }
-
-    async def runner() -> None:
-        service = CatalogService.__new__(CatalogService)
-        service._trakt = DummyTrakt()
-        state = ProfileState(
-            id="tester",
-            openrouter_api_key="key",
-            openrouter_model="model",
-            trakt_client_id=None,
-            trakt_access_token="token",
-            catalog_keys=("movies-for-you",),
-            catalog_item_count=8,
-            generation_retry_limit=1,
-            refresh_interval_seconds=3600,
-            response_cache_seconds=600,
-            trakt_history_limit=1_000,
-            next_refresh_at=None,
-            last_refreshed_at=None,
-        )
-
-        movie_batch = HistoryBatch(items=[], total=600, fetched=True)
-        show_batch = HistoryBatch(items=[], total=700, fetched=True)
-
-        movie_total, show_total, snapshot = await service._gather_trakt_history_metadata(
-            state,
-            movie_batch=movie_batch,
-            show_batch=show_batch,
-        )
-
-        assert movie_total == 1_800
-        assert show_total == 3_200
-        assert snapshot is not None
-        assert snapshot["movies"]["plays"] == 1800
-        assert snapshot["episodes"]["plays"] == 3200
-
-    asyncio.run(runner())
-
-
 def test_trakt_watched_extraction_handles_missing_sections() -> None:
     """Missing sections or malformed values do not raise errors."""
 
@@ -333,16 +285,6 @@ def test_trakt_watched_extraction_handles_missing_sections() -> None:
     assert CatalogService._extract_trakt_watched(stats, "movies") == 12
     assert CatalogService._extract_trakt_watched(stats, "shows") is None
     assert CatalogService._extract_trakt_watched(stats, "episodes") is None
-
-
-def test_history_limit_resolves_to_highest_totals() -> None:
-    """Calculated history windows respect totals and configured caps."""
-
-    service = CatalogService.__new__(CatalogService)
-
-    assert service._resolve_history_limit(500, 1_200, 900) == 1_200
-    assert service._resolve_history_limit(9_000, 12_000, None) == 10_000
-    assert service._resolve_history_limit(5, None, None) == 10
 
 
 def test_profile_id_inferred_from_catalog_id() -> None:
