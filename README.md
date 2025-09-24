@@ -15,46 +15,48 @@ Behind the scenes the service stores catalog payloads in SQLite (or any SQLAlche
 
 ## 🎬 Current catalog line-up
 
-AIOPicks currently generates 19 fixed lanes. Movies and series are requested separately so Stremio can merge in rich metadata from Cinemeta or another compatible service you configure.
+AIOPicks currently generates 20 fixed lanes. Movies and series are requested separately so Stremio can merge in rich metadata from Cinemeta or another compatible service you configure.
 
 | Lane | Type | What the AI looks for |
 |------|------|-----------------------|
-| Because You Watched | Series | Similar series to your recent watches, extending the moods you just binged. |
 | Movies For You | Movie | Movies that represent your overall taste profile across favourite genres and moods. |
-| Series For You | Series | Series that reflect your overall taste profile and the tones you gravitate toward most. |
-| Your Top Genre Picks | Movie | Fresh films expanding on the genres you play most—thrillers, comedies, and more. |
-| Actors You Love | Movie | Movies headlined by the performers you return to again and again. |
-| Directors You Return To | Movie | Films from directors already in your rotation, including acclaimed deep cuts. |
+| Series For You | Series | Series that represent your overall taste profile across favourite genres and moods. |
+| Your Comfort Zone | Movie | Safe film picks that align perfectly with the patterns you already love to revisit. |
+| Expand Your Horizons | Movie | Quality films just outside your normal rotation, ready to broaden your taste without losing your vibe. |
+| Your Next Obsession | Series | Binge-ready series poised to become your newest favourites based on deep taste analysis. |
+| You Missed These | Movie | Noteworthy films that slipped past you the first time but match what you already enjoy. |
+| Critics Love, You'll Love | Movie | Critically adored movies curated to mirror your personal preferences and pacing. |
+| International Picks | Movie | Foreign films matched to your favourite genres and storytelling moods. |
+| Your Guilty Pleasures Extended | Movie | More of the indulgent movies you watch on repeat—even if you never mention them. |
+| Starring Your Favorite Actors | Movie | Films featuring the actors who dominate your watch history and never disappoint. |
+| Visually Stunning For You | Movie | Cinematography showcases that match your genre preferences and appetite for lush visuals. |
+| Background Watching | Series | Easy-flowing series perfect for multitasking without losing the narrative thread. |
+| Same Universe, Different Story | Series | Spin-offs and related series expanding the franchises you already follow. |
+| Animation Worth Your Time | Series | Animated series that transcend age brackets while still fitting your preferred tones. |
+| Documentaries You’ll Like | Movie | Feature documentaries tied to the crime, sports, and history stories you revisit often. |
+| Your Top Genre | Movie | Essential films from the genre you stream most, dialled in to your signature moods. |
+| Your Second Genre | Series | Series highlights from the runner-up genre in your history, tuned to familiar beats. |
+| Your Third Genre | Movie | Hand-picked films exploring the third pillar of your taste profile with fresh twists. |
 | Franchises You Started | Series | Series sequels, prequels, and spin-offs tied to universes you've begun but not finished. |
-| Hidden Gems (Last 5 Years) | Movie | Critically praised films from the past five years that align with your taste yet slipped by. |
-| Classics You Missed | Movie | 70s–90s films that fit your profile but never made it into your history. |
-| Best of the Last Decade | Movie | Standout 2010s films matching your vibe and still waiting in your queue. |
-| Seasonal Picks for You | Movie | Rotating films for the current season—holiday comfort, Halloween chills, or summer heat. |
-| International Favorites | Movie | Foreign films in your preferred genres that global fans rave about. |
-| Cult Classics in Your Taste | Movie | Famous cult films that match your sensibilities but never hit your watch history. |
-| Indie Discoveries | Movie | Independent films that mirror your taste with daring storytelling and strong buzz. |
-| Mini-Series Matches | Series | Short, high-impact limited series tuned to your favourite tones and genres. |
-| Docs You’ll Like | Movie | Feature documentaries linked to the interests—crime, sports, history—you revisit often. |
-| Animated Worlds | Series | Animated and anime series that echo the flavours you already love. |
-| Missed While Binging | Movie | Films released while you were deep into other shows—worthy catch-ups for your queue. |
-| Forgotten Favorites Expanded | Series | Series related to movies or shows you adored years ago—spiritual sequels and continuations. |
+| Independent Films That Mirror Your Taste | Movie | Indie standouts with daring storytelling and strong buzz that align with your preferences. |
 
 ## ⚙️ How it works right now
 
-1. **Trakt ingestion** – The service pulls your configured amount of movie and series history (up to 2,000 entries each) together with statistics that help the UI surface watch-time totals.
+1. **Trakt ingestion** – The service pulls your configured amount of movie and series history (all plays by default, or the limit you set up to 10,000 entries per type) together with statistics that help the UI surface watch-time totals.
 2. **Taste summary** – AIOPicks builds prompts summarising your favourite genres, people, and recent standouts while passing fingerprints of everything you have already logged so repeats can be filtered out.
 3. **AI generation** – Each lane is requested in parallel through OpenRouter, seeded with a random token so results rotate between refreshes while keeping the lane title stable.
 4. **Metadata enrichment** – When a Cinemeta-compatible metadata service URL is configured, missing posters, backgrounds, IDs, and release years are filled in before storing the catalogs.
 5. **Persistence & refresh** – Catalogs are written to the database and served straight from storage. Background jobs refresh them according to your configured interval, and `/api/profile/prepare` can be called (or triggered from the config UI) to force a rebuild.
-6. **Graceful fallback** – If the discovery engine cannot be reached, history-based mixes keep your catalogs populated until the next successful refresh.
+6. **Graceful fallback** – If the discovery engine cannot be reached, history-based mixes keep your catalogs populated with "AI Offline" playlists until the next successful refresh.
 
 ## 🚀 Feature highlights
 
-- **Stable discovery lanes** – A fixed manifest of 19 catalogs keeps Stremio shelves predictable while still rotating the items inside each lane.
+- **Stable discovery lanes** – A fixed manifest of 20 catalogs keeps Stremio shelves predictable while still rotating the items inside each lane.
 - **OpenRouter + Trakt intelligence** – The AI receives rich context including genre/people counters and a deduplication index so it can recommend true first-time watches.
 - **Metadata bridge** – Optional lookups against Cinemeta (or any compatible service) fill in posters, backgrounds, and canonical IDs for cleaner Stremio grids.
 - **Profile-aware config** – Manifest parameters, refresh cadence, and overrides are stored per profile in the database, and the `/config` UI lets you trigger refreshes, sign into Trakt, and copy ready-to-use manifest URLs.
 - **Resilient caching** – Catalogs persist in SQLite by default and survive restarts; background refreshes can be forced via API or will run automatically on the interval you specify.
+- **Path-based overrides** – Manifest URLs can encode OpenRouter keys, catalog selections, cache timing, and more without touching environment variables, making it easy to generate multiple tailored profiles.
 
 ## 🛠️ Prerequisites
 
@@ -72,13 +74,23 @@ AIOPicks currently generates 19 fixed lanes. Movies and series are requested sep
    - `TRAKT_CLIENT_ID`, `TRAKT_CLIENT_SECRET`, and a long-lived `TRAKT_ACCESS_TOKEN`
 3. Optional but recommended settings:
    - `OPENROUTER_MODEL` (defaults to `google/gemini-2.5-flash-lite`)
-   - `TRAKT_HISTORY_LIMIT` (default `1000`, max `10000` per type)
+   - `TRAKT_HISTORY_LIMIT` (default `0` = full history, max `10000` per type)
    - `CATALOG_ITEM_COUNT` (items per lane, default `8`)
    - `REFRESH_INTERVAL` (seconds between automatic refreshes, default `43200`)
    - `CACHE_TTL` (how long cached catalog responses stay valid, default `1800`)
-   - `GENERATION_RETRY_LIMIT` (extra AI attempts if a lane comes back short)
+   - `GENERATION_RETRY_LIMIT` (extra AI attempts if a lane comes back short, default `3`)
+   - `CATALOG_KEYS` (comma-separated lane keys if you want to trim the manifest or change the order)
    - `METADATA_ADDON_URL` (Cinemeta or another metadata service; omit `/manifest.json`)
    - `DATABASE_URL` (SQLAlchemy URL; defaults to `sqlite+aiosqlite:///./aiopicks.db`)
+
+### Manifest overrides and multi-profile use
+
+- Use `/manifest/<key>/<value>/manifest.json` to override runtime settings without query strings. Values must be URL encoded and key/value pairs must be balanced. Examples:
+  - `/manifest/catalogItems/12/manifest.json` – request 12 items per catalog.
+  - `/manifest/catalogKeys/movies-for-you%2Cyou-missed-these/manifest.json` – restrict the manifest to the listed lanes.
+  - `/manifest/openrouterKey/sk_live_xxx/refreshInterval/21600/manifest.json` – inject an API key override and reduce the refresh window to 6 hours.
+- `/profiles/<profile>/manifest.json` and matching catalog routes expose explicit profile IDs (handy for multi-user hosting).
+- The config page surfaces copyable manifest links that already include any overrides stored for the profile.
 
 Open `http://localhost:3000/config` after the server starts to:
 
@@ -97,7 +109,7 @@ cp .env.sample .env  # update with your keys
 uvicorn app.main:app --reload --port 3000
 ```
 
-Visit `http://localhost:3000/manifest.json` to confirm the service is live and the manifest lists all 19 catalogs. Install that URL in Stremio once your profile shows as "Ready" on the config page.
+Visit `http://localhost:3000/manifest.json` to confirm the service is live and the manifest lists all 20 catalogs. Install that URL in Stremio once your profile shows as "Ready" on the config page.
 
 ### Running tests
 
@@ -140,7 +152,7 @@ docker run -d \
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/manifest.json` | GET | Returns the manifest containing the 19 catalog lanes for the resolved profile. |
+| `/manifest.json` | GET | Returns the manifest containing the 20 catalog lanes for the resolved profile. |
 | `/catalog/{type}/{id}.json` | GET | Returns the metas array for a catalog (`type` is `movie` or `series`). |
 | `/profiles/{profile}/manifest.json` | GET | Manifest scoped to an explicit profile ID (useful for multi-user setups). |
 | `/profiles/{profile}/catalog/{type}/{id}.json` | GET | Catalog payload for a specific profile/content combination. |
