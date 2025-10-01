@@ -70,7 +70,7 @@ class ManifestConfig(BaseModel):
     generation_retry_limit: int | None = Field(
         default=None,
         ge=0,
-        le=10,
+        le=50,
         validation_alias=AliasChoices(
             "generationRetries", "retryLimit", "maxRetries"
         ),

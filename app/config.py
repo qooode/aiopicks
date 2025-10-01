@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     )
 
     generation_retry_limit: int = Field(
-        default=3, alias="GENERATION_RETRY_LIMIT", ge=0, le=10
+        default=3, alias="GENERATION_RETRY_LIMIT", ge=0, le=50
     )
 
     trakt_api_url: HttpUrl = Field(

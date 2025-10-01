@@ -107,7 +107,8 @@ class OpenRouterClient:
                 resolved_retry_limit = int(retry_limit)
             except (TypeError, ValueError):
                 resolved_retry_limit = self._settings.generation_retry_limit
-        resolved_retry_limit = max(0, min(resolved_retry_limit, 10))
+        # Allow higher retry budgets; clamp to a safe upper bound
+        resolved_retry_limit = max(0, min(resolved_retry_limit, 50))
         tasks = [
             asyncio.create_task(
                 self._generate_catalog_for_definition(
