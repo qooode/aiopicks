@@ -327,52 +327,87 @@ class OpenRouterClient:
         """Ensure every catalog reaches the configured item target."""
 
         async def _fill(content_type: str, catalogs: list[Catalog]) -> None:
-            attempts = 0
             content_exclusions = (exclusions or {}).get(content_type)
             session_seen = self._build_session_seen(catalogs)
-            requests = self._prepare_top_up_requests(
-                catalogs,
-                item_limit,
-                exclusions=content_exclusions,
-                session_seen=session_seen,
-            )
             attempt_limit = max(0, max_attempts)
             if attempt_limit <= 0:
                 return
-            while requests and attempts < attempt_limit:
-                additions = await self._top_up_catalogs(
-                    summary,
-                    seed=seed,
-                    content_type=content_type,
-                    requests=requests,
+            # Build a global list of titles already present across this content group's catalogs
+            def _global_avoid_titles() -> list[str]:
+                titles: list[str] = []
+                seen_titles: set[str] = set()
+                for cat in catalogs:
+                    for it in cat.items:
+                        label = self._summarise_item(it)
+                        if label and label not in seen_titles:
+                            seen_titles.add(label)
+                            titles.append(label)
+                            if len(titles) >= 80:
+                                return titles
+                return titles
+
+            # Strictly per-catalog retries to respect lane themes
+            for catalog in catalogs:
+                attempts = 0
+                while attempts < attempt_limit:
+                    cleaned, summaries, missing = self._normalise_catalog(
+                        catalog,
+                        item_limit=item_limit,
+                        exclusions=content_exclusions,
+                        session_seen=session_seen,
+                    )
+                    if catalog.items != cleaned:
+                        catalog.items = cleaned
+                    if missing <= 0:
+                        break
+                    single_request = {
+                        catalog.id: {
+                            "catalog": catalog,
+                            "missing": missing,
+                            "summaries": summaries,
+                            "confirmed_items": [
+                                item.model_dump(mode="json", exclude_none=True)
+                                for item in cleaned
+                            ],
+                        }
+                    }
+                    additions = await self._top_up_catalogs(
+                        summary,
+                        seed=seed,
+                        content_type=content_type,
+                        requests=single_request,
+                        item_limit=item_limit,
+                        api_key=api_key,
+                        model=model,
+                        exclusions=content_exclusions,
+                        attempt=attempts,
+                        attempt_limit=attempt_limit,
+                        avoid_titles_global=_global_avoid_titles(),
+                    )
+                    if additions:
+                        self._merge_additions(
+                            [catalog],
+                            additions,
+                            exclusions=content_exclusions,
+                            session_seen=session_seen,
+                        )
+                    attempts += 1
+                # Log if still short after all attempts
+                cleaned, _, missing = self._normalise_catalog(
+                    catalog,
                     item_limit=item_limit,
-                    api_key=api_key,
-                    model=model,
                     exclusions=content_exclusions,
-                    attempt=attempts,
-                    attempt_limit=attempt_limit,
+                    session_seen=session_seen,
                 )
-                if additions:
-                    self._merge_additions(
-                        catalogs,
-                        additions,
-                        exclusions=content_exclusions,
-                        session_seen=session_seen,
-                    )
-                    requests = self._prepare_top_up_requests(
-                        catalogs,
+                if catalog.items != cleaned:
+                    catalog.items = cleaned
+                if missing > 0:
+                    logger.warning(
+                        "Model did not reach %s items for %s catalog %s",
                         item_limit,
-                        exclusions=content_exclusions,
-                        session_seen=session_seen,
+                        content_type,
+                        catalog.id,
                     )
-                attempts += 1
-            if requests:
-                logger.warning(
-                    "Model did not reach %s items for %s catalogs: %s",
-                    item_limit,
-                    content_type,
-                    ", ".join(sorted(requests.keys())),
-                )
 
         await asyncio.gather(
             _fill("movie", bundle.movie_catalogs),
@@ -458,6 +493,7 @@ class OpenRouterClient:
         exclusions: dict[str, Any] | None = None,
         attempt: int = 0,
         attempt_limit: int = 1,
+        avoid_titles_global: list[str] | None = None,
     ) -> dict[str, list[CatalogItem]]:
         """Ask the model for additional catalog items."""
 
@@ -508,6 +544,13 @@ class OpenRouterClient:
             "Respond with JSON where each key is a catalog ID and the value is an "
             "array of the missing items."
         )
+        # For multi-catalog batches, make it explicit that all IDs must be present
+        if len(requests) > 1:
+            all_ids = ", ".join(requests.keys())
+            prompt_lines.append(
+                "Return entries for EVERY Catalog ID listed below. Keys must match exactly."
+            )
+            prompt_lines.append(f"Catalog IDs: {all_ids}")
         avoided_titles = self._render_exclusion_titles(exclusions, limit=20)
         excluded: set[str] = set()
         if exclusions:
@@ -516,6 +559,12 @@ class OpenRouterClient:
             prompt_lines.append(
                 "Avoid anything they've already finished, including: "
                 + "; ".join(avoided_titles)
+                + "."
+            )
+        if avoid_titles_global:
+            prompt_lines.append(
+                "Also avoid repeating items already chosen for other catalogs in this refresh: "
+                + "; ".join(avoid_titles_global[:60])
                 + "."
             )
         prompt_lines.append("Use this schema:")
@@ -529,16 +578,33 @@ class OpenRouterClient:
             catalog: Catalog = info["catalog"]
             summaries: list[str] = info.get("summaries", [])
             confirmed = info.get("confirmed_items") or []
+            # Sanitize confirmed items for the LLM: keep only title and year
+            def _sanitise_confirmed(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+                cleaned: list[dict[str, Any]] = []
+                for e in entries:
+                    if not isinstance(e, dict):
+                        continue
+                    title = str(e.get("title") or e.get("name") or "").strip()
+                    if not title:
+                        continue
+                    item = {"name": title}
+                    year = e.get("year")
+                    if isinstance(year, int):
+                        item["year"] = year
+                    elif isinstance(year, str) and year.isdigit():
+                        item["year"] = int(year)
+                    cleaned.append(item)
+                return cleaned
+            confirmed_sanitised = _sanitise_confirmed(confirmed)
             missing = info.get("missing", 0)
             prompt_lines.append("")
-            prompt_lines.append(f"Catalog ID: {catalog_id}")
             prompt_lines.append(f"Title: {catalog.title}")
             if catalog.description:
                 prompt_lines.append(f"Description: {catalog.description}")
             prompt_lines.append(
                 "Confirmed lineup so far (preserve these entries and extend the list):"
             )
-            prompt_lines.append(json.dumps(confirmed, ensure_ascii=False, indent=2))
+            prompt_lines.append(json.dumps(confirmed_sanitised, ensure_ascii=False, indent=2))
             if summaries:
                 prompt_lines.append(
                     "Existing picks (titles for quick reference): " + "; ".join(summaries)

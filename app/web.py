@@ -395,7 +395,7 @@ CONFIG_TEMPLATE = dedent(
                 <p class="description">Choose how many AI generated catalogs to expose and copy a ready-to-install manifest URL. Empty fields fall back to the server defaults.</p>
                 <p class="notice hidden" id="manifest-lock">Sign in with Trakt to unlock personalised manifest links.</p>
                 <div class="field">
-                    <label for="config-openrouter-key">OpenRouter API key <span class="helper">Required – stored client side only</span></label>
+                    <label for="config-openrouter-key">OpenRouter API key <span class="helper">Required – stored on server per profile. For safety, use a separate key with limited credits.</span></label>
                     <input id="config-openrouter-key" type="text" placeholder="sk-or-..." autocomplete="off" spellcheck="false" />
                 </div>
                 <div class="field">

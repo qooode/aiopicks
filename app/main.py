@@ -310,7 +310,6 @@ def register_routes(fastapi_app: FastAPI) -> None:
                     cfg.catalog_item_count,
                     cfg.refresh_interval,
                     cfg.response_cache,
-                    cfg.trakt_history_limit,
                     cfg.trakt_client_id,
                     cfg.trakt_access_token,
                     cfg.metadata_addon_url,
@@ -335,11 +334,7 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 and state.trakt_client_id != config.trakt_client_id
             ):
                 return True
-            if (
-                config.trakt_history_limit is not None
-                and state.trakt_history_limit != config.trakt_history_limit
-            ):
-                return True
+            # trakt_history_limit is ignored; full history is always used
             if (
                 config.openrouter_key is not None
                 and state.openrouter_api_key != config.openrouter_key

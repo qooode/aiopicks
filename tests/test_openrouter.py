@@ -180,6 +180,7 @@ def test_ensure_item_targets_retries_when_additions_drop_out() -> None:
             exclusions: dict[str, object] | None = None,
             attempt: int = 0,
             attempt_limit: int = 1,
+            avoid_titles_global: list[str] | None = None,
         ) -> dict[str, list[CatalogItem]]:
             self.attempts.append(attempt)
             if self._responses:

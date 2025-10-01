@@ -490,18 +490,19 @@ class CatalogService:
             state.openrouter_model,
         )
 
+        # Always fetch the full Trakt history for generation (no user-configurable limit)
         movie_history_batch, show_history_batch = await asyncio.gather(
             self._trakt.fetch_history(
                 "movies",
                 client_id=state.trakt_client_id,
                 access_token=state.trakt_access_token,
-                limit=state.trakt_history_limit,
+                limit=None,
             ),
             self._trakt.fetch_history(
                 "shows",
                 client_id=state.trakt_client_id,
                 access_token=state.trakt_access_token,
-                limit=state.trakt_history_limit,
+                limit=None,
             ),
         )
         movie_history = movie_history_batch.items
@@ -513,9 +514,10 @@ class CatalogService:
             show_batch=show_history_batch,
         )
 
+        # Persist stats while reflecting that a full-history scan was used (limit=0)
         await self._store_trakt_history_stats(
             state,
-            history_limit=state.trakt_history_limit,
+            history_limit=0,
             movie_total=movie_total,
             show_total=show_total,
             snapshot=snapshot,
@@ -1103,10 +1105,8 @@ class CatalogService:
                     response_cache_seconds=config.response_cache or self._settings.response_cache_seconds,
                     trakt_client_id=config.trakt_client_id or self._settings.trakt_client_id,
                     trakt_access_token=config.trakt_access_token or self._settings.trakt_access_token,
-                    trakt_history_limit=(
-                        config.trakt_history_limit
-                        or self._settings.trakt_history_limit
-                    ),
+                    # Always default to full history; do not accept client-provided limits
+                    trakt_history_limit=self._settings.trakt_history_limit,
                     metadata_addon_url=metadata_addon,
                     next_refresh_at=now,
                     last_refreshed_at=None,
@@ -1168,13 +1168,7 @@ class CatalogService:
                 if config.trakt_access_token is not None and config.trakt_access_token != profile.trakt_access_token:
                     profile.trakt_access_token = config.trakt_access_token
                     refresh_required = True
-                if (
-                    config.trakt_history_limit
-                    and config.trakt_history_limit
-                    != getattr(profile, "trakt_history_limit", None)
-                ):
-                    profile.trakt_history_limit = config.trakt_history_limit
-                    refresh_required = True
+                # Ignore any client-provided Trakt history limit; always use full history
                 if config.metadata_addon_url is not None:
                     new_metadata_url = str(config.metadata_addon_url)
                     if new_metadata_url != getattr(profile, "metadata_addon_url", None):
@@ -1922,4 +1916,3 @@ class CatalogService:
     def _scoped_catalog_id(self, profile_id: str, base_id: str) -> str:
         base = base_id or "catalog"
         return f"{profile_id}{self._CATALOG_SCOPE_SEPARATOR}{base}"
-
