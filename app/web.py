@@ -420,7 +420,7 @@ CONFIG_TEMPLATE = dedent(
                 </div>
                 <div class="field">
                     <label for="config-generation-retries">Retry budget <span class="helper">Extra AI passes if repeats slip in</span> <span class="range-value" id="generation-retries-value"></span></label>
-                    <input id="config-generation-retries" type="range" min="0" max="10" step="1" />
+                    <input id="config-generation-retries" type="range" min="0" max="50" step="1" />
                 </div>
                 <div class="field">
                     <label for="config-history-limit">
