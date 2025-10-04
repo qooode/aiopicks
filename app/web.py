@@ -395,6 +395,13 @@ CONFIG_TEMPLATE = dedent(
                 <p class="description">Choose how many AI generated catalogs to expose and copy a ready-to-install manifest URL. Empty fields fall back to the server defaults.</p>
                 <p class="notice hidden" id="manifest-lock">Sign in with Trakt to unlock personalised manifest links.</p>
                 <div class="field">
+                    <label for="config-engine">Discovery engine <span class="helper">Use AI via OpenRouter or Local (offline)</span></label>
+                    <select id="config-engine">
+                        <option value="openrouter">AI via OpenRouter</option>
+                        <option value="local">Local (offline, history-based)</option>
+                    </select>
+                </div>
+                <div class="field">
                     <label for="config-openrouter-key">OpenRouter API key <span class="helper">Required – stored on server per profile. For safety, use a separate key with limited credits.</span></label>
                     <input id="config-openrouter-key" type="text" placeholder="sk-or-..." autocomplete="off" spellcheck="false" />
                 </div>
@@ -483,6 +490,7 @@ CONFIG_TEMPLATE = dedent(
             const prepareProfileButton = document.getElementById('prepare-profile');
             const prepareSpinner = document.getElementById('prepare-spinner');
             const prepareLabel = prepareProfileButton.querySelector('.label');
+            const engineSelect = document.getElementById('config-engine');
             const copyDefaultManifest = document.getElementById('copy-default-manifest');
             const copyConfiguredManifest = document.getElementById('copy-configured-manifest');
             const manifestPreview = document.getElementById('manifest-preview');
@@ -736,6 +744,7 @@ CONFIG_TEMPLATE = dedent(
             applyCatalogSelection(defaultCatalogSelection, { silent: true });
             hideCatalogWarning();
 
+            engineSelect.value = (defaults.generatorMode || 'openrouter');
             openrouterModel.value = defaults.openrouterModel || '';
             metadataAddonInput.value = defaults.metadataAddon || '';
             const defaultCatalogItems = defaults.catalogItemCount || catalogItemsSlider.min || 4;
@@ -764,6 +773,7 @@ CONFIG_TEMPLATE = dedent(
                 updateTraktUi();
             }
             refreshTraktMessaging();
+            updateEngineUi();
             updateManifestPreview();
             updateManifestUi();
             updateManifestStatus();
@@ -804,6 +814,11 @@ CONFIG_TEMPLATE = dedent(
             });
             openrouterKey.addEventListener('input', () => {
                 markProfileDirty();
+                updateManifestPreview();
+            });
+            engineSelect.addEventListener('change', () => {
+                markProfileDirty();
+                updateEngineUi();
                 updateManifestPreview();
             });
             refreshSelect.addEventListener('change', () => {
@@ -1080,6 +1095,17 @@ CONFIG_TEMPLATE = dedent(
                 }
                 copyConfiguredManifest.disabled = traktLocked || !isProfileReady();
                 manifestLock.classList.toggle('hidden', !traktLoginAvailable || Boolean(traktAuth.accessToken));
+                updateEngineUi();
+            }
+
+            function updateEngineUi() {
+                const useLocal = (document.getElementById('config-engine')?.value || 'openrouter') === 'local';
+                const keyField = openrouterKey && openrouterKey.closest('.field');
+                const modelField = openrouterModel && openrouterModel.closest('.field');
+                [keyField, modelField].forEach((el) => {
+                    if (!el) return;
+                    el.classList.toggle('hidden', useLocal);
+                });
             }
 
             function scheduleStatusPoll(delay = 4000) {
@@ -1175,6 +1201,7 @@ CONFIG_TEMPLATE = dedent(
                 }
                 return {
                     profileId,
+                    generator: typeof raw.generator === 'string' ? raw.generator : '',
                     hasCatalogs: Boolean(raw.hasCatalogs),
                     needsRefresh: Boolean(raw.needsRefresh),
                     refreshing: Boolean(raw.refreshing),
@@ -1193,6 +1220,7 @@ CONFIG_TEMPLATE = dedent(
 
             function collectManifestSettings() {
                 return {
+                    engine: engineSelect.value,
                     openrouterKey: openrouterKey.value.trim(),
                     openrouterModel: openrouterModel.value.trim(),
                     metadataAddon: metadataAddonInput.value.trim(),
@@ -1216,6 +1244,7 @@ CONFIG_TEMPLATE = dedent(
                         payload.profileId = profileId;
                     }
                 }
+                if (settings.engine) payload.engine = settings.engine;
                 if (settings.openrouterKey) payload.openrouterKey = settings.openrouterKey;
                 if (settings.openrouterModel) payload.openrouterModel = settings.openrouterModel;
                 if (Array.isArray(settings.catalogKeys) && settings.catalogKeys.length > 0) {
@@ -1302,6 +1331,13 @@ CONFIG_TEMPLATE = dedent(
                         return;
                     }
                     profileStatus = normalized;
+                    if (profileStatus.generator) {
+                        const engineEl = document.getElementById('config-engine');
+                        if (engineEl) {
+                            engineEl.value = profileStatus.generator;
+                            updateEngineUi();
+                        }
+                    }
                     syncCatalogSelectionsFromStatus();
                     syncHistoryLimitFromStatus();
                     syncGenerationRetriesFromStatus();
@@ -1375,6 +1411,7 @@ CONFIG_TEMPLATE = dedent(
                     return url.toString();
                 }
                 const manifestKeys = [
+                    'engine',
                     'openrouterKey',
                     'openrouterModel',
                     'metadataAddon',
@@ -1757,6 +1794,7 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
     defaults = {
         "appName": settings.app_name,
         "manifestName": settings.app_name,
+        "generatorMode": getattr(settings, "generator_mode", "openrouter"),
         "openrouterModel": settings.openrouter_model,
         "catalogItemCount": settings.catalog_item_count,
         "catalogKeys": list(settings.catalog_keys),

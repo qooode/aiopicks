@@ -46,6 +46,11 @@ class Settings(BaseSettings):
         default="google/gemini-2.5-flash-lite", alias="OPENROUTER_MODEL"
     )
 
+    # Discovery engine selection: "openrouter" (AI) or "local"
+    generator_mode: Literal["openrouter", "local"] = Field(
+        default="openrouter", alias="GENERATOR_MODE"
+    )
+
     catalog_keys: tuple[str, ...] = Field(
         default=DEFAULT_CATALOG_KEYS,
         alias="CATALOG_KEYS",

@@ -172,6 +172,74 @@ class TraktClient:
             return {}
         return data
 
+    async def fetch_listing(
+        self,
+        content_type: str,
+        *,
+        list_type: str = "trending",
+        limit: int = 100,
+        genres: list[str] | None = None,
+        languages: list[str] | None = None,
+        years: str | None = None,
+        client_id: str | None = None,
+        access_token: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch a generic listing (trending/popular/recommended) from Trakt.
+
+        Only uses endpoints that are widely available. This returns normalized media dicts
+        (same shape as history: under key 'movie' or 'show' originally).
+        """
+        kind = "movies" if content_type == "movie" else "shows"
+        path = f"/{kind}/{list_type}"
+        params: dict[str, Any] = {
+            "limit": max(1, min(int(limit or 100), 100)),
+            "page": 1,
+            "extended": "full",
+        }
+        # Trakt supports filters via query string for many list endpoints; pass if provided
+        if genres:
+            try:
+                cleaned = ",".join(sorted({g.strip().lower() for g in genres if g}))
+                if cleaned:
+                    params["genres"] = cleaned
+            except Exception:
+                pass
+        if languages:
+            try:
+                cleaned = ",".join(sorted({l.strip().lower() for l in languages if l}))
+                if cleaned:
+                    params["languages"] = cleaned
+            except Exception:
+                pass
+        if years:
+            params["years"] = years
+
+        response = await self._client.get(
+            path,
+            headers=self._headers(client_id=client_id, access_token=access_token),
+            params=params,
+        )
+        if response.status_code >= 400:
+            logger.warning(
+                "Failed to fetch Trakt %s listing for %s: %s",
+                list_type,
+                content_type,
+                response.text,
+            )
+            return []
+        data = response.json()
+        if not isinstance(data, list):
+            return []
+
+        key = "movie" if content_type == "movie" else "show"
+        normalized: list[dict[str, Any]] = []
+        for entry in data:
+            if isinstance(entry, dict) and key in entry and isinstance(entry[key], dict):
+                normalized.append(entry[key])
+            elif isinstance(entry, dict) and entry.get("title") and entry.get("ids"):
+                normalized.append(entry)
+        return normalized
+
     async def fetch_user(
         self,
         *,

@@ -304,6 +304,7 @@ def register_routes(fastapi_app: FastAPI) -> None:
             return any(
                 value is not None
                 for value in (
+                    cfg.generator_mode,
                     cfg.openrouter_key,
                     cfg.openrouter_model,
                     cfg.catalog_keys,
@@ -324,6 +325,11 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 return _has_overrides(config)
 
             state = existing_status.state
+            if (
+                config.generator_mode is not None
+                and getattr(state, "generator_mode", None) != config.generator_mode
+            ):
+                return True
             if (
                 config.trakt_access_token is not None
                 and state.trakt_access_token != config.trakt_access_token

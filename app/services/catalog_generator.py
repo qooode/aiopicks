@@ -50,6 +50,11 @@ class ManifestConfig(BaseModel):
         default=None,
         validation_alias=AliasChoices("openrouterModel", "openRouterModel"),
     )
+    generator_mode: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("engine", "generator", "mode", "discoveryEngine"),
+        description="Discovery engine selection: 'openrouter' or 'local'",
+    )
     manifest_name: str | None = Field(
         default=None,
         max_length=120,
@@ -172,6 +177,7 @@ class ManifestConfig(BaseModel):
         "profile_id",
         "openrouter_key",
         "openrouter_model",
+        "generator_mode",
         "manifest_name",
         "trakt_client_id",
         "trakt_access_token",
@@ -187,6 +193,18 @@ class ManifestConfig(BaseModel):
             return stripped or None
         return value
 
+    @field_validator("generator_mode")
+    @classmethod
+    def _normalize_engine(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        lowered = value.strip().lower()
+        if lowered in {"openrouter", "ai", "llm"}:
+            return "openrouter"
+        if lowered in {"local", "offline"}:
+            return "local"
+        raise ValueError("generator mode must be 'openrouter' or 'local'")
+
 
 @dataclass
 class ProfileState:
@@ -195,6 +213,7 @@ class ProfileState:
     id: str
     openrouter_api_key: str
     openrouter_model: str
+    generator_mode: str
     trakt_client_id: str | None
     trakt_access_token: str | None
     catalog_keys: tuple[str, ...]
@@ -240,6 +259,7 @@ class ProfileStatus:
     def to_payload(self) -> dict[str, Any]:
         return {
             "profileId": self.state.id,
+            "generator": self.state.generator_mode,
             "openrouterModel": self.state.openrouter_model,
             "catalogItemCount": self.state.catalog_item_count,
             "catalogKeys": list(self.state.catalog_keys),
@@ -536,32 +556,45 @@ class CatalogService:
         exclusion_payload = self._serialise_watched_index(watched_index)
         definitions = self._definitions_for_keys(state.catalog_keys)
 
-        try:
-            bundle = await self._ai.generate_catalogs(
-                summary,
-                seed=seed,
-                api_key=state.openrouter_api_key,
-                model=state.openrouter_model,
-                exclusions=exclusion_payload,
-                retry_limit=state.generation_retry_limit,
+        use_local = (getattr(state, "generator_mode", "openrouter") == "local") or (not bool(state.openrouter_api_key))
+
+        if use_local:
+            catalogs = await self._generate_local_catalogs(
+                movie_history,
+                show_history,
                 definitions=definitions,
+                seed=seed,
+                item_limit=state.catalog_item_count,
+                watched=watched_index,
             )
-            catalogs = self._bundle_to_dict(bundle)
-            self._prune_watched_items(catalogs, watched_index)
             await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
-            if not (catalogs["movie"] or catalogs["series"]):
-                logger.warning(
-                    "AI returned an empty catalog bundle for profile %s; falling back to history",
+        else:
+            try:
+                bundle = await self._ai.generate_catalogs(
+                    summary,
+                    seed=seed,
+                    api_key=state.openrouter_api_key,
+                    model=state.openrouter_model,
+                    exclusions=exclusion_payload,
+                    retry_limit=state.generation_retry_limit,
+                    definitions=definitions,
+                )
+                catalogs = self._bundle_to_dict(bundle)
+                self._prune_watched_items(catalogs, watched_index)
+                await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
+                if not (catalogs["movie"] or catalogs["series"]):
+                    logger.warning(
+                        "AI returned an empty catalog bundle for profile %s; falling back to history",
+                        state.id,
+                    )
+                    catalogs = None
+            except Exception as exc:
+                logger.exception(
+                    "AI generation failed for profile %s, falling back to history data: %s",
                     state.id,
+                    exc,
                 )
                 catalogs = None
-        except Exception as exc:
-            logger.exception(
-                "AI generation failed for profile %s, falling back to history data: %s",
-                state.id,
-                exc,
-            )
-            catalogs = None
 
         if catalogs is None:
             catalogs = self._build_fallback_catalogs(
@@ -644,6 +677,7 @@ class CatalogService:
             id=profile.id,
             openrouter_api_key=profile.openrouter_api_key,
             openrouter_model=profile.openrouter_model,
+            generator_mode=getattr(profile, "generator_mode", "openrouter") or "openrouter",
             trakt_client_id=profile.trakt_client_id,
             trakt_access_token=profile.trakt_access_token,
             catalog_keys=self._normalise_catalog_keys(
@@ -1085,9 +1119,19 @@ class CatalogService:
             now = datetime.utcnow()
 
             if profile is None:
+                desired_mode = (
+                    (config.generator_mode or self._settings.generator_mode)
+                    if hasattr(self._settings, "generator_mode")
+                    else (config.generator_mode or "openrouter")
+                )
+                desired_mode = desired_mode or "openrouter"
                 openrouter_key = config.openrouter_key or self._settings.openrouter_api_key
-                if not openrouter_key:
-                    raise ValueError("An OpenRouter API key is required.")
+                if desired_mode == "openrouter" and not openrouter_key:
+                    # No key provided for AI mode; fall back to local
+                    desired_mode = "local"
+                if desired_mode == "openrouter" and not openrouter_key:
+                    # Still missing, be explicit
+                    raise ValueError("An OpenRouter API key is required for AI mode.")
                 metadata_addon = (
                     str(config.metadata_addon_url)
                     if config.metadata_addon_url is not None
@@ -1097,8 +1141,9 @@ class CatalogService:
                 profile = Profile(
                     id=profile_id,
                     display_name=identity.display_name,
-                    openrouter_api_key=openrouter_key,
+                    openrouter_api_key=openrouter_key or "",
                     openrouter_model=config.openrouter_model or self._settings.openrouter_model,
+                    generator_mode=desired_mode,
                     catalog_count=len(selected_keys),
                     catalog_keys=list(selected_keys),
                     catalog_item_count=(
@@ -1152,6 +1197,11 @@ class CatalogService:
                 if config.openrouter_model and config.openrouter_model != profile.openrouter_model:
                     profile.openrouter_model = config.openrouter_model
                     refresh_required = True
+                if config.generator_mode is not None:
+                    new_mode = config.generator_mode
+                    if new_mode != getattr(profile, "generator_mode", "openrouter"):
+                        profile.generator_mode = new_mode
+                        refresh_required = True
                 if (
                     config.catalog_item_count
                     and config.catalog_item_count != getattr(
@@ -1312,15 +1362,14 @@ class CatalogService:
             profile = await session.get(Profile, "default")
             now = datetime.utcnow()
             if profile is None:
-                if not self._settings.openrouter_api_key:
-                    logger.warning(
-                        "Skipping default profile creation because OPENROUTER_API_KEY is not set"
-                    )
-                    return
+                # Decide default generator mode
+                default_mode = getattr(self._settings, "generator_mode", "openrouter")
+                use_ai = default_mode == "openrouter" and bool(self._settings.openrouter_api_key)
                 profile = Profile(
                     id="default",
-                    openrouter_api_key=self._settings.openrouter_api_key,
+                    openrouter_api_key=(self._settings.openrouter_api_key or "") if use_ai else "",
                     openrouter_model=self._settings.openrouter_model,
+                    generator_mode=("openrouter" if use_ai else "local"),
                     trakt_client_id=self._settings.trakt_client_id,
                     trakt_access_token=self._settings.trakt_access_token,
                     trakt_history_limit=self._settings.trakt_history_limit,
@@ -1357,6 +1406,13 @@ class CatalogService:
                     updated = True
                 if not profile.openrouter_model:
                     profile.openrouter_model = self._settings.openrouter_model
+                    updated = True
+                # Keep generator_mode in sync with settings if missing
+                if not getattr(profile, "generator_mode", None):
+                    profile.generator_mode = getattr(self._settings, "generator_mode", "openrouter")
+                    # If AI selected but no key, force local
+                    if profile.generator_mode == "openrouter" and not self._settings.openrouter_api_key:
+                        profile.generator_mode = "local"
                     updated = True
                 if getattr(profile, "catalog_item_count", None) != self._settings.catalog_item_count:
                     profile.catalog_item_count = self._settings.catalog_item_count
@@ -1813,6 +1869,333 @@ class CatalogService:
             items=items,
             generated_at=datetime.utcnow(),
         )
+
+    def _unique_media_from_history(
+        self, history: list[dict[str, Any]], *, key: str
+    ) -> list[dict[str, Any]]:
+        """Collapse history entries into unique media records preserving basic attributes."""
+        seen: set[tuple[str, int | None]] = set()
+        unique: list[dict[str, Any]] = []
+        for entry in history:
+            media = entry.get(key) or {}
+            if not isinstance(media, dict):
+                continue
+            title = media.get("title")
+            if not isinstance(title, str) or not title.strip():
+                continue
+            year = media.get("year") if isinstance(media.get("year"), int) else None
+            fingerprint = (title.strip().casefold(), year)
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            ids = media.get("ids") or {}
+            record = {
+                "title": title.strip(),
+                "year": year,
+                "ids": ids if isinstance(ids, dict) else {},
+                "genres": [g for g in (media.get("genres") or []) if isinstance(g, str)],
+                "language": media.get("language") if isinstance(media.get("language"), str) else None,
+                "runtime": media.get("runtime") if isinstance(media.get("runtime"), int) else None,
+                "images": media.get("images") if isinstance(media.get("images"), dict) else {},
+                "overview": media.get("overview") if isinstance(media.get("overview"), str) else None,
+            }
+            unique.append(record)
+        return unique
+
+    def _catalog_from_media(
+        self,
+        media_list: list[dict[str, Any]],
+        *,
+        content_type: str,
+        title: str,
+        description: str | None,
+        seed: str,
+        item_limit: int,
+    ) -> Catalog:
+        items: list[CatalogItem] = []
+        for media in media_list[: item_limit]:
+            ids = media.get("ids") or {}
+            data: dict[str, Any] = {
+                "name": media.get("title") or f"Unknown {content_type.title()}",
+                "type": content_type,
+                "description": media.get("overview"),
+                "year": media.get("year"),
+                "imdb_id": ids.get("imdb"),
+                "trakt_id": ids.get("trakt"),
+                "tmdb_id": ids.get("tmdb"),
+                "runtime_minutes": media.get("runtime"),
+                "genres": [g for g in (media.get("genres") or []) if isinstance(g, str)],
+            }
+            images = media.get("images") or {}
+            if isinstance(images, dict):
+                poster = images.get("poster") or images.get("poster_full") or images.get("poster_url")
+                if isinstance(poster, str) and poster.startswith("http"):
+                    data["poster"] = poster
+                background = images.get("background") or images.get("background_full") or images.get("background_url")
+                if isinstance(background, str) and background.startswith("http"):
+                    data["background"] = background
+            try:
+                items.append(CatalogItem.model_validate(data))
+            except ValidationError:
+                continue
+        return Catalog(
+            id=f"aiopicks-{content_type}-{slugify(title) or f'local-{seed}'}",
+            type=content_type,
+            title=title,
+            description=description or f"Local picks curated from your {content_type} history.",
+            seed=seed,
+            items=items,
+            generated_at=datetime.utcnow(),
+        )
+
+    async def _generate_local_catalogs(
+        self,
+        movie_history: list[dict[str, Any]],
+        show_history: list[dict[str, Any]],
+        *,
+        definitions: Sequence[StableCatalogDefinition],
+        seed: str,
+        item_limit: int,
+        watched: dict[str, WatchedMediaIndex],
+    ) -> dict[str, dict[str, Catalog]]:
+        """Heuristic, offline recommender: themed remixes of a user's history.
+
+        This does not fetch new titles; it smartly resurfaces relevant items per lane.
+        """
+        movie_media = self._unique_media_from_history(movie_history, key="movie")
+        show_media = self._unique_media_from_history(show_history, key="show")
+
+        def genre_counter(media_list: list[dict[str, Any]]) -> Counter:
+            c: Counter[str] = Counter()
+            for m in media_list:
+                c.update([g.lower() for g in (m.get("genres") or []) if isinstance(g, str)])
+            return c
+
+        movie_genres = genre_counter(movie_media)
+        show_genres = genre_counter(show_media)
+
+        def top_genres(counter: Counter[str], n: int) -> list[str]:
+            return [g for g, _ in counter.most_common(n) if g]
+
+        def apply_filters(media_list: list[dict[str, Any]], *,
+                          include_genres: set[str] | None = None,
+                          exclude_genres: set[str] | None = None,
+                          language_pred=None,
+                          runtime_pred=None) -> list[dict[str, Any]]:
+            results: list[dict[str, Any]] = []
+            for m in media_list:
+                genres = {g.lower() for g in (m.get("genres") or []) if isinstance(g, str)}
+                if include_genres and not (genres & include_genres):
+                    continue
+                if exclude_genres and (genres & exclude_genres):
+                    continue
+                if language_pred:
+                    lang = m.get("language")
+                    try:
+                        if not language_pred(lang):
+                            continue
+                    except Exception:
+                        pass
+                if runtime_pred:
+                    rt = m.get("runtime")
+                    try:
+                        if not runtime_pred(rt):
+                            continue
+                    except Exception:
+                        pass
+                results.append(m)
+            return results
+
+        catalogs: dict[str, dict[str, Catalog]] = {"movie": {}, "series": {}}
+        # Cache candidates per content type and source
+        candidate_cache: dict[str, dict[str, list[dict[str, Any]]]] = {
+            "movie": {"trending": [], "popular": [], "anticipated": []},
+            "series": {"trending": [], "popular": [], "anticipated": []},
+        }
+        # Track session-wide uniqueness across all lanes per content type
+        session_seen: dict[str, set[tuple[str, int | None]]] = {"movie": set(), "series": set()}
+
+        for definition in definitions:
+            content_type = definition.content_type
+            media_list = movie_media if content_type == "movie" else show_media
+            if not media_list:
+                continue
+            tg = top_genres(movie_genres if content_type == "movie" else show_genres, 6)
+            top1, top2, top3 = (tg[0] if len(tg) > 0 else None, tg[1] if len(tg) > 1 else None, tg[2] if len(tg) > 2 else None)
+            include: set[str] | None = None
+            exclude: set[str] | None = None
+            lang_pred = None
+            rt_pred = None
+
+            key = definition.key
+            k = key.lower()
+            if k in {"movies-for-you", "series-for-you"}:
+                include = set([g for g in tg[:3] if g]) or None
+            elif k == "your-comfort-zone":
+                include = set([g for g in tg[:2] if g]) or None
+            elif k == "expand-your-horizons":
+                include = set([g for g in tg[2:6] if g]) or None
+            elif k == "your-next-obsession":
+                include = set([g for g in tg[:3] if g]) or None
+                rt_pred = lambda r: isinstance(r, int) and r >= 40
+            elif k == "you-missed-these":
+                # Lean towards older samples in history
+                media_list = list(reversed(media_list))
+                include = set([g for g in tg[:4] if g]) or None
+            elif k == "critics-love-youll-love":
+                include = {g for g in ["drama", "biography", "history"] if g in tg}
+            elif k == "international-picks":
+                lang_pred = lambda lang: isinstance(lang, str) and lang.lower() != "en"
+            elif k == "your-guilty-pleasures-extended":
+                include = {g for g in ["action", "horror", "romance", "comedy", "thriller"] if g in tg}
+            elif k == "starring-your-favorite-actors":
+                include = set([g for g in tg[:2] if g]) or None
+            elif k == "visually-stunning-for-you":
+                include = {g for g in ["sci-fi", "fantasy", "adventure", "drama", "animation"] if g in tg}
+            elif k == "background-watching":
+                include = {g for g in ["comedy", "animation"] if g in tg}
+                rt_pred = lambda r: isinstance(r, int) and r > 0 and r <= 30
+            elif k == "same-universe-different-story":
+                include = set([g for g in tg[:3] if g]) or None
+            elif k == "animation-worth-your-time":
+                include = {"animation"}
+            elif k == "documentaries-youll-like":
+                include = {"documentary"}
+            elif k == "your-top-genre":
+                include = {top1} if top1 else None
+            elif k == "your-second-genre":
+                include = {top2} if top2 else None
+            elif k == "your-third-genre":
+                include = {top3} if top3 else None
+            elif k == "franchises-you-started":
+                include = set([g for g in tg[:3] if g]) or None
+            elif k == "independent-films":
+                include = {g for g in ["independent", "indie"] if g in tg}
+                if not include:
+                    lang_pred = lambda lang: isinstance(lang, str) and lang.lower() != "en"
+
+            # Build unseen candidates from Trakt listings, filtered by lane rules
+            def _keypair(m: dict[str, Any]) -> tuple[str, int | None]:
+                t = (m.get("title") or "").strip()
+                y = m.get("year") if isinstance(m.get("year"), int) else None
+                return (t.casefold(), y)
+
+            def _fingerprints(m: dict[str, Any]) -> set[str]:
+                ids = m.get("ids") or {}
+                fps: set[str] = set()
+                prefix = content_type
+                imdb = ids.get("imdb")
+                if isinstance(imdb, str) and imdb.strip():
+                    fps.add(f"{prefix}:imdb:{imdb.strip().lower()}")
+                trakt_id = ids.get("trakt")
+                if isinstance(trakt_id, int):
+                    fps.add(f"{prefix}:trakt:{trakt_id}")
+                tmdb = ids.get("tmdb")
+                if isinstance(tmdb, int):
+                    fps.add(f"{prefix}:tmdb:{tmdb}")
+                title = (m.get("title") or "").strip().casefold()
+                year = m.get("year") if isinstance(m.get("year"), int) else None
+                if title:
+                    fps.add(f"{prefix}:title:{title}")
+                    if year:
+                        fps.add(f"{prefix}:title:{title}:{year}")
+                return fps
+
+            watched_fps = set((watched.get("movie") if content_type == "movie" else watched.get("series")).fingerprints if watched else set())
+            lane: list[dict[str, Any]] = []
+
+            # Build candidate pools once per content type and memoize
+            pool_order = ("trending", "popular", "anticipated")
+            if not all(candidate_cache[content_type].get(src) for src in pool_order):
+                genres_filter = list(include or []) if include else None
+                lang_counts: Counter[str] = Counter(
+                    [
+                        (m.get("language") or "").strip().lower()
+                        for m in media_list
+                        if isinstance(m.get("language"), str) and m.get("language").strip()
+                    ]
+                )
+                top_langs = [l for l, _ in lang_counts.most_common(3) if l]
+                for src in pool_order:
+                    try:
+                        listing = await self._trakt.fetch_listing(
+                            content_type,
+                            list_type=src,
+                            limit=max(item_limit * 3, 30),
+                            genres=genres_filter,
+                            languages=top_langs or None,
+                        )
+                    except Exception:
+                        listing = []
+                    # Deduplicate inside pool by (title, year)
+                    seen_pairs: set[tuple[str, int | None]] = set()
+                    deduped: list[dict[str, Any]] = []
+                    for m in listing:
+                        kp = _keypair(m)
+                        if not kp[0] or kp in seen_pairs:
+                            continue
+                        seen_pairs.add(kp)
+                        deduped.append(m)
+                    candidate_cache[content_type][src] = deduped
+
+            # Selection strategy with retries to reach item_limit
+            def _try_collect(candidates: list[dict[str, Any]], *, apply_lane_filters: bool = True) -> None:
+                nonlocal lane
+                if len(lane) >= item_limit:
+                    return
+                items = candidates
+                if apply_lane_filters:
+                    items = apply_filters(
+                        candidates,
+                        include_genres=include,
+                        exclude_genres=exclude,
+                        language_pred=lang_pred,
+                        runtime_pred=rt_pred,
+                    )
+                for m in items:
+                    if len(lane) >= item_limit:
+                        break
+                    # Skip watched and session duplicates
+                    if _fingerprints(m) & watched_fps:
+                        continue
+                    kp = _keypair(m)
+                    if not kp[0] or kp in session_seen[content_type]:
+                        continue
+                    session_seen[content_type].add(kp)
+                    lane.append(m)
+
+            # Phase 1: strict filters
+            for src in pool_order:
+                _try_collect(candidate_cache[content_type][src], apply_lane_filters=True)
+                if len(lane) >= item_limit:
+                    break
+            # Phase 2: relax language/runtime
+            if len(lane) < item_limit:
+                saved_lang, saved_rt = lang_pred, rt_pred
+                lang_pred, rt_pred = None, None
+                for src in pool_order:
+                    _try_collect(candidate_cache[content_type][src], apply_lane_filters=True)
+                    if len(lane) >= item_limit:
+                        break
+                lang_pred, rt_pred = saved_lang, saved_rt
+            # Phase 3: relax genres entirely
+            if len(lane) < item_limit:
+                for src in pool_order:
+                    _try_collect(candidate_cache[content_type][src], apply_lane_filters=False)
+                    if len(lane) >= item_limit:
+                        break
+
+            catalog = self._catalog_from_media(
+                lane,
+                content_type=content_type,
+                title=definition.title,
+                description=definition.description,
+                seed=seed,
+                item_limit=item_limit,
+            )
+            catalogs[content_type][catalog.id] = catalog
+
+        return catalogs
 
     async def _load_catalogs(
         self, profile_id: str, content_type: str | None = None

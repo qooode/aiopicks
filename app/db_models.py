@@ -21,6 +21,7 @@ class Profile(Base):
     display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     openrouter_api_key: Mapped[str] = mapped_column(Text)
     openrouter_model: Mapped[str] = mapped_column(String(200))
+    generator_mode: Mapped[str] = mapped_column(String(32), default="openrouter")
     trakt_client_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     trakt_access_token: Mapped[str | None] = mapped_column(String(200), nullable=True)
     trakt_history_limit: Mapped[int] = mapped_column(Integer, default=0)

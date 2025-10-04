@@ -1,17 +1,17 @@
 <h1 align="center">AIOPicks</h1>
 
 <p align="center">
-  <strong>AI-personalised Stremio discovery built from your Trakt history.</strong><br />
-  AIOPicks keeps a curated set of streaming lanes filled with fresh picks generated through OpenRouter.
+  <strong>AI or Local personalised Stremio discovery built from your Trakt history.</strong><br />
+  AIOPicks keeps a curated set of streaming lanes filled with fresh picks generated via OpenRouter or a fast Local engine.
 </p>
 
 ---
 
 ## ✨ What is AIOPicks?
 
-AIOPicks is a FastAPI service for Stremio that turns your own viewing footprint into a living discovery feed. On every refresh the service summarises your Trakt history, requests new titles from an OpenRouter-powered generator that match each lane, enriches the results with metadata, and serves them as standard Stremio catalogs. The catalogs stay consistent—only the items rotate—so you can pin them on the Stremio home screen without surprises.
+AIOPicks is a FastAPI service for Stremio that turns your own viewing footprint into a living discovery feed. On every refresh the service summarises your Trakt history, generates lane-matched titles using either an OpenRouter-powered AI generator or a Local offline engine, enriches the results with metadata, and serves them as standard Stremio catalogs. The catalogs stay consistent—only the items rotate—so you can pin them on the Stremio home screen without surprises.
 
-Behind the scenes the service stores catalog payloads in SQLite (or any SQLAlchemy-compatible database you point it at) and refreshes them on a schedule. If the AI call fails it falls back to "recently loved" history mixes, so your catalogs never disappear.
+Behind the scenes the service stores catalog payloads in SQLite (or any SQLAlchemy-compatible database you point it at) and refreshes them on a schedule. If the AI path isn’t configured, the Local engine uses Trakt listings (trending/popular) plus your taste signals to propose fresh, unseen titles—so your catalogs never disappear.
 
 ## 🎬 Current catalog line-up
 
@@ -44,15 +44,18 @@ AIOPicks currently generates 20 fixed lanes. Movies and series are requested sep
 
 1. **Trakt ingestion** – The service pulls your configured amount of movie and series history (all plays by default, or the limit you set up to 10,000 entries per type) together with statistics that help the UI surface watch-time totals.
 2. **Taste summary** – AIOPicks builds prompts summarising your favourite genres, people, and recent standouts while passing fingerprints of everything you have already logged so repeats can be filtered out.
-3. **AI generation** – Each lane is requested in parallel through OpenRouter, seeded with a random token so results rotate between refreshes while keeping the lane title stable.
+3. **Discovery generation (AI or Local)** –
+   - AI mode: lanes are requested in parallel through OpenRouter, seeded with a random token so results rotate between refreshes while keeping the lane title stable.
+   - Local mode: lanes are filled by remixing your taste profile with fresh, unseen picks sourced from Trakt listings (trending/popular), filtered per lane.
 4. **Metadata enrichment** – When a Cinemeta-compatible metadata service URL is configured, missing posters, backgrounds, IDs, and release years are filled in before storing the catalogs.
 5. **Persistence & refresh** – Catalogs are written to the database and served straight from storage. Background jobs refresh them according to your configured interval, and `/api/profile/prepare` can be called (or triggered from the config UI) to force a rebuild.
-6. **Graceful fallback** – If the discovery engine cannot be reached, history-based mixes keep your catalogs populated with "AI Offline" playlists until the next successful refresh.
+6. **Graceful fallback** – If AI is selected but unavailable, Local mode keeps your catalogs populated with fresh, unseen picks; if the network fails entirely, history-based mixes keep lanes alive until the next successful refresh.
 
 ## 🚀 Feature highlights
 
 - **Stable discovery lanes** – A fixed manifest of 20 catalogs keeps Stremio shelves predictable while still rotating the items inside each lane.
-- **OpenRouter + Trakt intelligence** – The AI receives rich context including genre/people counters and a deduplication index so it can recommend true first-time watches.
+- **Dual discovery engine** – Choose AI via OpenRouter or a fast Local engine that works with only Trakt + a metadata add-on.
+- **OpenRouter + Trakt intelligence** – In AI mode, the model receives genre/language counters, recent highlights, and a deduplication index to recommend true first-time watches.
 - **Metadata bridge** – Optional lookups against Cinemeta (or any compatible service) fill in posters, backgrounds, and canonical IDs for cleaner Stremio grids.
 - **Profile-aware config** – Manifest parameters, refresh cadence, and overrides are stored per profile in the database, and the `/config` UI lets you trigger refreshes, sign into Trakt, and copy ready-to-use manifest URLs.
 - **Resilient caching** – Catalogs persist in SQLite by default and survive restarts; background refreshes can be forced via API or will run automatically on the interval you specify.
@@ -62,7 +65,7 @@ AIOPicks currently generates 20 fixed lanes. Movies and series are requested sep
 
 - Python 3.10+
 - A Trakt application (client ID/secret) and an access token with history scope
-- An OpenRouter API key
+- An OpenRouter API key (optional if you use Local mode)
 - (Recommended) A Cinemeta-compatible metadata endpoint, e.g. `https://v3-cinemeta.strem.io`
 - (Optional) Docker if you prefer container deployment
 
@@ -70,18 +73,19 @@ AIOPicks currently generates 20 fixed lanes. Movies and series are requested sep
 
 1. Copy `.env.sample` to `.env` and fill in your credentials. Only the variables listed below are currently used by the application.
 2. Provide the minimum secrets:
-   - `OPENROUTER_API_KEY`
-   - `TRAKT_CLIENT_ID`, `TRAKT_CLIENT_SECRET`, and a long-lived `TRAKT_ACCESS_TOKEN`
+   - Local mode (no AI accounts): `TRAKT_CLIENT_ID`, `TRAKT_CLIENT_SECRET`, and a long-lived `TRAKT_ACCESS_TOKEN`
+   - AI mode: add `OPENROUTER_API_KEY` (and optionally choose a different `OPENROUTER_MODEL`)
 3. Optional but recommended settings:
    - `OPENROUTER_MODEL` (defaults to `google/gemini-2.5-flash-lite`)
    - `TRAKT_HISTORY_LIMIT` (default `0` = full history, max `10000` per type)
    - `CATALOG_ITEM_COUNT` (items per lane, default `8`)
    - `REFRESH_INTERVAL` (seconds between automatic refreshes, default `43200`)
    - `CACHE_TTL` (how long cached catalog responses stay valid, default `1800`)
-   - `GENERATION_RETRY_LIMIT` (extra AI attempts if a lane comes back short, default `3`)
+   - `GENERATION_RETRY_LIMIT` (extra AI attempts if a lane comes back short, default `3`; AI mode only)
    - `CATALOG_KEYS` (comma-separated lane keys if you want to trim the manifest or change the order)
    - `METADATA_ADDON_URL` (Cinemeta or another metadata service; omit `/manifest.json`)
    - `DATABASE_URL` (SQLAlchemy URL; defaults to `sqlite+aiosqlite:///./aiopicks.db`)
+   - `GENERATOR_MODE` (choose `openrouter` or `local`; defaults to `openrouter`. You can still switch per-profile in the UI.)
 
 ### Manifest overrides and multi-profile use
 
@@ -89,6 +93,7 @@ AIOPicks currently generates 20 fixed lanes. Movies and series are requested sep
   - `/manifest/catalogItems/12/manifest.json` – request 12 items per catalog.
   - `/manifest/catalogKeys/movies-for-you%2Cyou-missed-these/manifest.json` – restrict the manifest to the listed lanes.
   - `/manifest/openrouterKey/sk_live_xxx/refreshInterval/21600/manifest.json` – inject an API key override and reduce the refresh window to 6 hours.
+  - `/manifest/engine/local/manifest.json` – switch the discovery engine to Local without touching `.env`.
 - `/profiles/<profile>/manifest.json` and matching catalog routes expose explicit profile IDs (handy for multi-user hosting).
 - The config page surfaces copyable manifest links that already include any overrides stored for the profile.
 
@@ -97,6 +102,14 @@ Open `http://localhost:3000/config` after the server starts to:
 - Verify your environment configuration and profile status
 - Trigger catalog generation (`Force refresh`)
 - Launch the Trakt OAuth helper if you prefer short-lived tokens
+- Choose the discovery engine (AI via OpenRouter or Local offline). In Local mode, OpenRouter fields are hidden.
+
+### Local mode at a glance (no AI accounts)
+
+- Uses your Trakt history to compute taste signals (genres, languages, recency) and a fingerprint set of watched titles.
+- Pulls fresh, unseen candidates from Trakt listings (trending/popular) and filters them per-lane (e.g., non-English for “International”, short runtimes for “Background Watching”, top genres for “Top/Second/Third Genre”).
+- Retries with progressively relaxed filters until each lane reaches your item target; de-duplicates across lanes within the same refresh.
+- Enriches items via your configured metadata add-on (title-based lookups only). No TMDb required.
 - Copy a manifest URL scoped to a specific profile and override set
 
 ## 🧪 Local development
@@ -142,9 +155,9 @@ docker run -d \
 ## 🏗️ Architecture overview
 
 - **FastAPI application** (`app/main.py`) wires HTTP routes, OAuth helpers, and the background refresh lifecycle.
-- **Catalog service** (`app/services/catalog_generator.py`) orchestrates Trakt ingestion, AI prompting, metadata enrichment, caching, and persistence.
-- **OpenRouter client** (`app/services/openrouter.py`) formats prompts and manages per-lane retries against the configured AI engine.
-- **Trakt client** (`app/services/trakt.py`) fetches history batches and statistics used to build prompts and UI summaries.
+- **Catalog service** (`app/services/catalog_generator.py`) orchestrates Trakt ingestion, AI prompting or Local selection, metadata enrichment, caching, and persistence.
+- **OpenRouter client** (`app/services/openrouter.py`) formats prompts and manages per-lane retries when AI is selected.
+- **Trakt client** (`app/services/trakt.py`) fetches history, basic stats, and lightweight listings (trending/popular) used for Local mode and taste summaries.
 - **Metadata bridge** (`app/services/metadata_addon.py`) talks to Cinemeta-compatible services to fill in artwork and IDs.
 - **Database layer** (`app/database.py`, `app/db_models.py`) persists profiles, catalog payloads, and refresh bookkeeping using SQLAlchemy async sessions.
 

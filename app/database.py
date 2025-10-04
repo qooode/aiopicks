@@ -103,6 +103,11 @@ class Database:
             "ALTER TABLE profiles ADD COLUMN catalog_keys JSON",
             "UPDATE profiles SET catalog_keys = '[]' WHERE catalog_keys IS NULL",
         )
+        _ensure_column(
+            "generator_mode",
+            "ALTER TABLE profiles ADD COLUMN generator_mode VARCHAR(32) DEFAULT 'openrouter'",
+            "UPDATE profiles SET generator_mode = 'openrouter' WHERE generator_mode IS NULL",
+        )
 
     async def dispose(self) -> None:
         """Dispose of the underlying database engine."""
