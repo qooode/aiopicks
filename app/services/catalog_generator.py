@@ -566,6 +566,8 @@ class CatalogService:
                 seed=seed,
                 item_limit=state.catalog_item_count,
                 watched=watched_index,
+                trakt_client_id=state.trakt_client_id,
+                trakt_access_token=state.trakt_access_token,
             )
             await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
         else:
@@ -1957,6 +1959,8 @@ class CatalogService:
         seed: str,
         item_limit: int,
         watched: dict[str, WatchedMediaIndex],
+        trakt_client_id: str | None = None,
+        trakt_access_token: str | None = None,
     ) -> dict[str, dict[str, Catalog]]:
         """Heuristic, offline recommender: themed remixes of a user's history.
 
@@ -2009,11 +2013,80 @@ class CatalogService:
         catalogs: dict[str, dict[str, Catalog]] = {"movie": {}, "series": {}}
         # Cache candidates per content type and source
         candidate_cache: dict[str, dict[str, list[dict[str, Any]]]] = {
-            "movie": {"trending": [], "popular": [], "anticipated": []},
-            "series": {"trending": [], "popular": [], "anticipated": []},
+            # favor recommendation/related over generic pools
+            "movie": {"recommended": [], "related": [], "popular": [], "trending": []},
+            "series": {"recommended": [], "related": [], "popular": [], "trending": []},
         }
         # Track session-wide uniqueness across all lanes per content type
         session_seen: dict[str, set[tuple[str, int | None]]] = {"movie": set(), "series": set()}
+
+        # Build lightweight preference weights from the user's own history to re-rank picks
+        def _normalize(counter: Counter[str]) -> dict[str, float]:
+            total = sum(v for v in counter.values() if isinstance(v, int) and v > 0)
+            if total <= 0:
+                return {}
+            return {k: float(v) / float(total) for k, v in counter.items() if v > 0}
+
+        # Genre and language affinity per content type
+        genre_weights_map = {
+            "movie": _normalize(movie_genres),
+            "series": _normalize(show_genres),
+        }
+        language_counts_movie: Counter[str] = Counter(
+            [
+                (m.get("language") or "").strip().lower()
+                for m in movie_media
+                if isinstance(m.get("language"), str) and m.get("language").strip()
+            ]
+        )
+        language_counts_series: Counter[str] = Counter(
+            [
+                (m.get("language") or "").strip().lower()
+                for m in show_media
+                if isinstance(m.get("language"), str) and m.get("language").strip()
+            ]
+        )
+        language_weights_map = {
+            "movie": _normalize(language_counts_movie),
+            "series": _normalize(language_counts_series),
+        }
+
+        # Simple year recency helper (scaled 0..1, favoring recent releases)
+        current_year = datetime.utcnow().year
+        def _recency_score(year: int | None) -> float:
+            if not isinstance(year, int) or year < 1900 or year > current_year + 1:
+                return 0.0
+            # Favor last ~20 years, gently decay beyond
+            window = 20
+            delta = max(0, min(window, year - (current_year - window)))
+            return float(delta) / float(window)
+
+        # Source priors to prefer Trakt trending/popular a bit in tie-breaks
+        _SRC_PRIOR = {"recommended": 0.35, "related": 0.30, "trending": 0.05, "popular": 0.02}
+
+        # Compute relevance score for a candidate using only fields we already fetch
+        def _relevance_score(m: dict[str, Any], *, content_type: str) -> float:
+            score = 0.0
+            # Genre affinity
+            gw = genre_weights_map.get(content_type) or {}
+            for g in (m.get("genres") or []):
+                gkey = str(g).strip().lower()
+                if not gkey:
+                    continue
+                score += gw.get(gkey, 0.0) * 1.0
+            # Language preference
+            lw = language_weights_map.get(content_type) or {}
+            lang = (m.get("language") or "").strip().lower()
+            if lang:
+                score += lw.get(lang, 0.0) * 0.6
+            # Recency bump
+            y = m.get("year") if isinstance(m.get("year"), int) else None
+            score += _recency_score(y) * 0.4
+            # Trakt source prior if present (annotated below)
+            src = str(m.get("aiop_src") or "").strip().lower()
+            if src in _SRC_PRIOR:
+                score += _SRC_PRIOR[src]
+            return score
 
         for definition in definitions:
             content_type = definition.content_type
@@ -2105,7 +2178,7 @@ class CatalogService:
             lane: list[dict[str, Any]] = []
 
             # Build candidate pools once per content type and memoize
-            pool_order = ("trending", "popular", "anticipated")
+            pool_order = ("recommended", "related", "trending", "popular")
             if not all(candidate_cache[content_type].get(src) for src in pool_order):
                 genres_filter = list(include or []) if include else None
                 lang_counts: Counter[str] = Counter(
@@ -2116,27 +2189,94 @@ class CatalogService:
                     ]
                 )
                 top_langs = [l for l, _ in lang_counts.most_common(3) if l]
-                for src in pool_order:
+
+                # Personalized recommendations (if available)
+                try:
+                    recs = await self._trakt.fetch_recommendations(
+                        content_type,
+                        limit=max(item_limit * 3, 50),
+                        client_id=trakt_client_id,
+                        access_token=trakt_access_token,
+                    )
+                except Exception:
+                    recs = []
+                seen_pairs: set[tuple[str, int | None]] = set()
+                deduped_recs: list[dict[str, Any]] = []
+                for m in recs:
+                    kp = _keypair(m)
+                    if not kp[0] or kp in seen_pairs:
+                        continue
+                    seen_pairs.add(kp)
+                    try:
+                        m["aiop_src"] = "recommended"
+                    except Exception:
+                        pass
+                    deduped_recs.append(m)
+                candidate_cache[content_type]["recommended"] = deduped_recs
+
+                # Related to user's own history seeds (limit calls for perf)
+                seeds: list[int | str] = []
+                for m in media_list:
+                    ids = m.get("ids") or {}
+                    tid = ids.get("trakt")
+                    if isinstance(tid, int):
+                        seeds.append(tid)
+                    if len(seeds) >= 8:  # cap related lookups per type
+                        break
+                related_collected: list[dict[str, Any]] = []
+                for sid in seeds:
+                    try:
+                        rel = await self._trakt.fetch_related(
+                            content_type,
+                            trakt_id=sid,
+                            limit=20,
+                            client_id=trakt_client_id,
+                            access_token=trakt_access_token,
+                        )
+                    except Exception:
+                        rel = []
+                    for m in rel:
+                        try:
+                            m["aiop_src"] = "related"
+                        except Exception:
+                            pass
+                    related_collected.extend(rel)
+                # Dedup related pool
+                seen_pairs_rel: set[tuple[str, int | None]] = set()
+                deduped_rel: list[dict[str, Any]] = []
+                for m in related_collected:
+                    kp = _keypair(m)
+                    if not kp[0] or kp in seen_pairs_rel:
+                        continue
+                    seen_pairs_rel.add(kp)
+                    deduped_rel.append(m)
+                candidate_cache[content_type]["related"] = deduped_rel
+
+                # Fallback generic pools, smaller weights and later in order
+                for src in ("trending", "popular"):
                     try:
                         listing = await self._trakt.fetch_listing(
                             content_type,
                             list_type=src,
-                            limit=max(item_limit * 3, 30),
+                            limit=max(item_limit * 2, 30),
                             genres=genres_filter,
                             languages=top_langs or None,
                         )
                     except Exception:
                         listing = []
-                    # Deduplicate inside pool by (title, year)
-                    seen_pairs: set[tuple[str, int | None]] = set()
-                    deduped: list[dict[str, Any]] = []
+                    seen_pairs_gp: set[tuple[str, int | None]] = set()
+                    deduped_gp: list[dict[str, Any]] = []
                     for m in listing:
                         kp = _keypair(m)
-                        if not kp[0] or kp in seen_pairs:
+                        if not kp[0] or kp in seen_pairs_gp:
                             continue
-                        seen_pairs.add(kp)
-                        deduped.append(m)
-                    candidate_cache[content_type][src] = deduped
+                        seen_pairs_gp.add(kp)
+                        try:
+                            m["aiop_src"] = src
+                        except Exception:
+                            pass
+                        deduped_gp.append(m)
+                    candidate_cache[content_type][src] = deduped_gp
 
             # Selection strategy with retries to reach item_limit
             def _try_collect(candidates: list[dict[str, Any]], *, apply_lane_filters: bool = True) -> None:
@@ -2164,7 +2304,7 @@ class CatalogService:
                     session_seen[content_type].add(kp)
                     lane.append(m)
 
-            # Phase 1: strict filters
+            # Phase 1: strict filters, prefer recommended/related first
             for src in pool_order:
                 _try_collect(candidate_cache[content_type][src], apply_lane_filters=True)
                 if len(lane) >= item_limit:
@@ -2186,7 +2326,12 @@ class CatalogService:
                         break
 
             catalog = self._catalog_from_media(
-                lane,
+                # Re-rank by lightweight preference score for better relevance
+                sorted(
+                    lane,
+                    key=lambda m: _relevance_score(m, content_type=content_type),
+                    reverse=True,
+                ),
                 content_type=content_type,
                 title=definition.title,
                 description=definition.description,

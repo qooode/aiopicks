@@ -240,6 +240,91 @@ class TraktClient:
                 normalized.append(entry)
         return normalized
 
+    async def fetch_recommendations(
+        self,
+        content_type: str,
+        *,
+        limit: int = 100,
+        client_id: str | None = None,
+        access_token: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch Trakt's personalized recommendations for the authenticated user.
+
+        Requires a valid OAuth access token. Returns normalized media dicts.
+        """
+
+        resolved_client_id = client_id or self._settings.trakt_client_id
+        resolved_access_token = access_token or self._settings.trakt_access_token
+        if not (resolved_client_id and resolved_access_token):
+            logger.info("Trakt credentials missing, skipping personalized recommendations for %s", content_type)
+            return []
+
+        kind = "movies" if content_type == "movie" else "shows"
+        path = f"/recommendations/{kind}"
+        params: dict[str, Any] = {
+            "limit": max(1, min(int(limit or 100), 100)),
+            "extended": "full",
+        }
+        response = await self._client.get(
+            path,
+            headers=self._headers(client_id=resolved_client_id, access_token=resolved_access_token),
+            params=params,
+        )
+        if response.status_code >= 400:
+            logger.warning(
+                "Failed to fetch Trakt recommendations for %s: %s",
+                content_type,
+                response.text,
+            )
+            return []
+        data = response.json()
+        if not isinstance(data, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for entry in data:
+            if isinstance(entry, dict) and entry.get("title") and entry.get("ids"):
+                normalized.append(entry)
+        return normalized
+
+    async def fetch_related(
+        self,
+        content_type: str,
+        *,
+        trakt_id: int | str,
+        limit: int = 20,
+        client_id: str | None = None,
+        access_token: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch titles related to a specific Trakt item (no auth required)."""
+
+        kind = "movies" if content_type == "movie" else "shows"
+        path = f"/{kind}/{trakt_id}/related"
+        params: dict[str, Any] = {
+            "limit": max(1, min(int(limit or 20), 100)),
+            "extended": "full",
+        }
+        response = await self._client.get(
+            path,
+            headers=self._headers(client_id=client_id, access_token=access_token),
+            params=params,
+        )
+        if response.status_code >= 400:
+            logger.warning(
+                "Failed to fetch Trakt related for %s %s: %s",
+                content_type,
+                trakt_id,
+                response.text,
+            )
+            return []
+        data = response.json()
+        if not isinstance(data, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for entry in data:
+            if isinstance(entry, dict) and entry.get("title") and entry.get("ids"):
+                normalized.append(entry)
+        return normalized
+
     async def fetch_user(
         self,
         *,
