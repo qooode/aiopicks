@@ -1036,7 +1036,16 @@ class CatalogService:
                         updates["background"] = match.background
 
                     if updates:
-                        updated_items.append(item.model_copy(update=updates))
+                        # model_copy(update=...) bypasses validation for fields like HttpUrl
+                        # which causes noisy Pydantic serialization warnings later. Re-validate
+                        # the updated item so URL fields are parsed correctly.
+                        try:
+                            payload = item.model_dump(mode="json", exclude_none=True)
+                            payload.update(updates)
+                            updated_items.append(CatalogItem.model_validate(payload))
+                        except ValidationError:
+                            # If validation fails for the patched item, keep the original
+                            updated_items.append(item)
                     else:
                         updated_items.append(item)
 

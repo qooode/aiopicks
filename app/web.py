@@ -1324,8 +1324,10 @@ CONFIG_TEMPLATE = dedent(
 
             async function fetchProfileStatus(options = {}) {
                 const { silent = false, useConfig = false } = options;
+                // Always include a profileId so updates apply to the caller's profile,
+                // not the shared default profile.
                 const params = buildProfileQuery({
-                    includeProfileId: !useConfig,
+                    includeProfileId: true,
                     includeConfig: useConfig,
                 });
                 if (!params) {
