@@ -599,13 +599,28 @@ class CatalogService:
                 catalogs = None
 
         if catalogs is None:
-            catalogs = self._build_fallback_catalogs(
-                movie_history,
-                show_history,
-                seed=seed,
-                item_limit=state.catalog_item_count,
-            )
-            await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
+            # Prefer full local generation over tiny fallback so all selected lanes appear
+            try:
+                catalogs = await self._generate_local_catalogs(
+                    movie_history,
+                    show_history,
+                    definitions=definitions,
+                    seed=seed,
+                    item_limit=state.catalog_item_count,
+                    watched=watched_index,
+                    trakt_client_id=state.trakt_client_id,
+                    trakt_access_token=state.trakt_access_token,
+                )
+                await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
+            except Exception:
+                # As a last resort, surface simple history compilations
+                catalogs = self._build_fallback_catalogs(
+                    movie_history,
+                    show_history,
+                    seed=seed,
+                    item_limit=state.catalog_item_count,
+                )
+                await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
 
         await self._store_catalogs(state, catalogs)
 

@@ -784,6 +784,18 @@ CONFIG_TEMPLATE = dedent(
                 }
             });
 
+            // Debounced auto-persist of config changes to the active profile
+            let profilePersistTimer = null;
+            function scheduleProfilePersist(delay = 600) {
+                if (profilePersistTimer) {
+                    clearTimeout(profilePersistTimer);
+                    profilePersistTimer = null;
+                }
+                profilePersistTimer = setTimeout(() => {
+                    void fetchProfileStatus({ useConfig: true, silent: true });
+                }, Math.max(200, Number(delay) || 600));
+            }
+
             catalogItemsSlider.addEventListener('input', () => {
                 catalogItemsValue.textContent = catalogItemsSlider.value;
                 markProfileDirty();
@@ -820,6 +832,8 @@ CONFIG_TEMPLATE = dedent(
                 markProfileDirty();
                 updateEngineUi();
                 updateManifestPreview();
+                // Persist engine change so manifest/profile endpoints respect it
+                scheduleProfilePersist();
             });
             refreshSelect.addEventListener('change', () => {
                 ensureOption(refreshSelect, refreshSelect.value, formatSeconds(Number(refreshSelect.value)));
