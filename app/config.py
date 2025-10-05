@@ -48,7 +48,7 @@ class Settings(BaseSettings):
 
     # Discovery engine selection: "openrouter" (AI) or "local"
     generator_mode: Literal["openrouter", "local"] = Field(
-        default="openrouter", alias="GENERATOR_MODE"
+        default="local", alias="GENERATOR_MODE"
     )
 
     catalog_keys: tuple[str, ...] = Field(

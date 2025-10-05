@@ -744,7 +744,7 @@ CONFIG_TEMPLATE = dedent(
             applyCatalogSelection(defaultCatalogSelection, { silent: true });
             hideCatalogWarning();
 
-            engineSelect.value = (defaults.generatorMode || 'openrouter');
+            engineSelect.value = (defaults.generatorMode || 'local');
             openrouterModel.value = defaults.openrouterModel || '';
             metadataAddonInput.value = defaults.metadataAddon || '';
             const defaultCatalogItems = defaults.catalogItemCount || catalogItemsSlider.min || 4;
@@ -1116,7 +1116,8 @@ CONFIG_TEMPLATE = dedent(
                 const useLocal = (document.getElementById('config-engine')?.value || 'openrouter') === 'local';
                 const keyField = openrouterKey && openrouterKey.closest('.field');
                 const modelField = openrouterModel && openrouterModel.closest('.field');
-                [keyField, modelField].forEach((el) => {
+                const retryField = generationRetriesSlider && generationRetriesSlider.closest('.field');
+                [keyField, modelField, retryField].forEach((el) => {
                     if (!el) return;
                     el.classList.toggle('hidden', useLocal);
                 });

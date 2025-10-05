@@ -325,6 +325,85 @@ class TraktClient:
                 normalized.append(entry)
         return normalized
 
+    async def fetch_people(
+        self,
+        content_type: str,
+        *,
+        trakt_id: int | str,
+        client_id: str | None = None,
+        access_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch cast/crew for a specific Trakt item.
+
+        Returns a raw dict from Trakt with keys like 'cast' and 'crew'.
+        """
+
+        kind = "movies" if content_type == "movie" else "shows"
+        path = f"/{kind}/{trakt_id}/people"
+        params: dict[str, Any] = {
+            "extended": "full",
+        }
+        response = await self._client.get(
+            path,
+            headers=self._headers(client_id=client_id, access_token=access_token),
+            params=params,
+        )
+        if response.status_code >= 400:
+            logger.warning(
+                "Failed to fetch Trakt people for %s %s: %s",
+                content_type,
+                trakt_id,
+                response.text,
+            )
+            return {}
+        data = response.json()
+        if not isinstance(data, dict):
+            return {}
+        return data
+
+    async def fetch_person_credits(
+        self,
+        person_id: int | str,
+        content_type: str,
+        *,
+        limit: int = 200,
+        client_id: str | None = None,
+        access_token: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch an actor's filmography for the given content type.
+
+        Normalizes to media dicts (like history entries) using keys 'movie' or 'show'.
+        """
+
+        segment = "movies" if content_type == "movie" else "shows"
+        path = f"/people/{person_id}/{segment}"
+        params: dict[str, Any] = {
+            "extended": "full",
+            "limit": max(1, min(int(limit or 200), 200)),
+        }
+        response = await self._client.get(
+            path,
+            headers=self._headers(client_id=client_id, access_token=access_token),
+            params=params,
+        )
+        if response.status_code >= 400:
+            logger.warning(
+                "Failed to fetch Trakt filmography for person %s (%s): %s",
+                person_id,
+                content_type,
+                response.text,
+            )
+            return []
+        data = response.json()
+        if not isinstance(data, list):
+            return []
+        key = "movie" if content_type == "movie" else "show"
+        normalized: list[dict[str, Any]] = []
+        for entry in data:
+            if isinstance(entry, dict) and key in entry and isinstance(entry[key], dict):
+                normalized.append(entry[key])
+        return normalized
+
     async def fetch_user(
         self,
         *,

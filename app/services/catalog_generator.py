@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 import secrets
+import random
 from contextlib import suppress
 from collections import Counter
 from dataclasses import dataclass
@@ -553,6 +554,8 @@ class CatalogService:
         catalogs: dict[str, dict[str, Catalog]] | None = None
         metadata_url = state.metadata_addon_url or self._default_metadata_addon_url
         watched_index = self._build_watched_index(movie_history, show_history)
+        # Collect fingerprints of items we most recently served to this profile
+        served_index = await self._build_served_index(state.id)
         exclusion_payload = self._serialise_watched_index(watched_index)
         definitions = self._definitions_for_keys(state.catalog_keys)
 
@@ -566,6 +569,7 @@ class CatalogService:
                 seed=seed,
                 item_limit=state.catalog_item_count,
                 watched=watched_index,
+                served=served_index,
                 trakt_client_id=state.trakt_client_id,
                 trakt_access_token=state.trakt_access_token,
             )
@@ -608,6 +612,7 @@ class CatalogService:
                     seed=seed,
                     item_limit=state.catalog_item_count,
                     watched=watched_index,
+                    served=served_index,
                     trakt_client_id=state.trakt_client_id,
                     trakt_access_token=state.trakt_access_token,
                 )
@@ -1494,6 +1499,26 @@ class CatalogService:
             }
         return payload
 
+    async def _build_served_index(self, profile_id: str) -> dict[str, set[str]]:
+        """Collect fingerprints of items most recently served to a profile.
+
+        Used to avoid returning the exact same titles on subsequent refreshes, while
+        still allowing backfill if pools are sparse.
+        """
+        served: dict[str, set[str]] = {"movie": set(), "series": set()}
+        try:
+            catalogs = await self._load_catalogs(profile_id)
+        except Exception:
+            catalogs = []
+        for catalog in catalogs:
+            fp_set = served.setdefault(catalog.type, set())
+            for item in catalog.items:
+                try:
+                    fp_set |= self._catalog_item_fingerprints(item)
+                except Exception:
+                    continue
+        return served
+
     def _index_history_items(
         self,
         history: list[dict[str, Any]],
@@ -1974,6 +1999,7 @@ class CatalogService:
         seed: str,
         item_limit: int,
         watched: dict[str, WatchedMediaIndex],
+        served: dict[str, set[str]] | None = None,
         trakt_client_id: str | None = None,
         trakt_access_token: str | None = None,
     ) -> dict[str, dict[str, Catalog]]:
@@ -2103,6 +2129,59 @@ class CatalogService:
                 score += _SRC_PRIOR[src]
             return score
 
+        def _seed_int(*parts: str) -> int:
+            joined = "|".join(parts)
+            return int(hashlib.sha256(joined.encode("utf-8")).hexdigest(), 16) % (2**32)
+
+        def _rng_for(*parts: str) -> random.Random:
+            return random.Random(_seed_int(*parts))
+
+        def _item_keyparts(m: dict[str, Any], *, content_type: str) -> tuple[str, int | None, str, int | None]:
+            title = (m.get("title") or "").strip().casefold()
+            year = m.get("year") if isinstance(m.get("year"), int) else None
+            ids = m.get("ids") or {}
+            imdb = (ids.get("imdb") or "").strip().lower() if isinstance(ids.get("imdb"), str) else ""
+            trakt_id = ids.get("trakt") if isinstance(ids.get("trakt"), int) else None
+            return (title, year, imdb, trakt_id)
+
+        def _noise_for_item(m: dict[str, Any], *, content_type: str, lane_key: str, width: float = 0.08) -> float:
+            title, year, imdb, trakt_id = _item_keyparts(m, content_type=content_type)
+            core = f"{content_type}:{lane_key}:{title}:{year}:{imdb}:{trakt_id or ''}:{seed}"
+            h = hashlib.sha256(core.encode("utf-8")).hexdigest()
+            base = int(h[:8], 16) / float(0xFFFFFFFF)
+            return (base - 0.5) * 2.0 * width
+
+        # Helper: lane-specific extra weights
+        def _lane_bonus(m: dict[str, Any], *, lane_key: str, content_type: str) -> float:
+            k = lane_key
+            bonus = 0.0
+            # Prefer well-rated titles for critics lane
+            if k == "critics-love-youll-love":
+                try:
+                    rating = float(m.get("rating") or 0.0)
+                except Exception:
+                    rating = 0.0
+                # Trakt ratings are 0..10 typically
+                bonus += max(0.0, min(1.0, rating / 10.0)) * 0.6
+            # Prefer long runtimes for visually stunning movies
+            if k == "visually-stunning-for-you" and content_type == "movie":
+                rt = m.get("runtime") if isinstance(m.get("runtime"), int) else m.get("runtime_minutes")
+                if isinstance(rt, int) and rt >= 110:
+                    bonus += 0.25
+            # Background watching prefers short episodes and light genres
+            if k == "background-watching" and content_type == "series":
+                rt = m.get("runtime") if isinstance(m.get("runtime"), int) else None
+                if isinstance(rt, int) and rt <= 30:
+                    bonus += 0.2
+                genres = {str(g).strip().lower() for g in (m.get("genres") or []) if g}
+                if {"comedy", "animation"} & genres:
+                    bonus += 0.15
+            # You missed these: de-emphasize recent
+            if k == "you-missed-these":
+                y = m.get("year") if isinstance(m.get("year"), int) else None
+                bonus -= _recency_score(y) * 0.6
+            return bonus
+
         for definition in definitions:
             content_type = definition.content_type
             media_list = movie_media if content_type == "movie" else show_media
@@ -2114,6 +2193,10 @@ class CatalogService:
             exclude: set[str] | None = None
             lang_pred = None
             rt_pred = None
+            # Lane-specific selection behavior flags
+            keep_language_strict = False
+            prefer_related_order = False
+            lane_local_pools: dict[str, list[dict[str, Any]]] | None = None
 
             key = definition.key
             k = key.lower()
@@ -2134,10 +2217,164 @@ class CatalogService:
                 include = {g for g in ["drama", "biography", "history"] if g in tg}
             elif k == "international-picks":
                 lang_pred = lambda lang: isinstance(lang, str) and lang.lower() != "en"
+                keep_language_strict = True
+                # Build lane-local pools with non-English bias to avoid English-heavy global cache
+                # Derive user's non-English top languages; fallback to common non-English set
+                lang_counts: Counter[str] = Counter([
+                    (m.get("language") or "").strip().lower()
+                    for m in media_list
+                    if isinstance(m.get("language"), str) and m.get("language").strip() and (m.get("language").strip().lower() != "en")
+                ])
+                top_non_en = [l for l, _ in lang_counts.most_common(5) if l and l != "en"]
+                if not top_non_en:
+                    top_non_en = ["es", "fr", "de", "ja", "ko", "zh", "it", "pt", "ru", "hi"]
+                lane_local_pools = {src: [] for src in ("recommended", "related", "trending", "popular")}
+                # Personalized recs (no language filter server-side)
+                try:
+                    recs = await self._trakt.fetch_recommendations(
+                        content_type,
+                        limit=max(item_limit * 3, 50),
+                        client_id=trakt_client_id,
+                        access_token=trakt_access_token,
+                    )
+                except Exception:
+                    recs = []
+                for m in recs:
+                    try:
+                        m["aiop_src"] = "recommended"
+                    except Exception:
+                        pass
+                rng_recs = _rng_for(seed, content_type, "international-recommended")
+                shuffled_recs = recs[:]
+                rng_recs.shuffle(shuffled_recs)
+                lane_local_pools["recommended"] = shuffled_recs
+                # Related pool
+                seeds = []
+                for mm in media_list:
+                    ids = mm.get("ids") or {}
+                    tid = ids.get("trakt")
+                    if isinstance(tid, int):
+                        seeds.append(tid)
+                rng_seeds = _rng_for(seed, content_type, "international-related-seeds")
+                rng_seeds.shuffle(seeds)
+                seeds = seeds[:8]
+                related_collected: list[dict[str, Any]] = []
+                for sid in seeds:
+                    try:
+                        rel = await self._trakt.fetch_related(
+                            content_type,
+                            trakt_id=sid,
+                            limit=20,
+                            client_id=trakt_client_id,
+                            access_token=trakt_access_token,
+                        )
+                    except Exception:
+                        rel = []
+                    for m in rel:
+                        try:
+                            m["aiop_src"] = "related"
+                        except Exception:
+                            pass
+                    related_collected.extend(rel)
+                seen_pairs_rel: set[tuple[str, int | None]] = set()
+                deduped_rel: list[dict[str, Any]] = []
+                for m in related_collected:
+                    t = (m.get("title") or "").strip().casefold()
+                    y = m.get("year") if isinstance(m.get("year"), int) else None
+                    kp = (t, y)
+                    if not t or kp in seen_pairs_rel:
+                        continue
+                    seen_pairs_rel.add(kp)
+                    deduped_rel.append(m)
+                rng_rel = _rng_for(seed, content_type, "international-related")
+                shuffled_rel = deduped_rel[:]
+                rng_rel.shuffle(shuffled_rel)
+                lane_local_pools["related"] = shuffled_rel
+                # Trending/popular with non-English language filter
+                for src in ("trending", "popular"):
+                    try:
+                        listing = await self._trakt.fetch_listing(
+                            content_type,
+                            list_type=src,
+                            limit=max(item_limit * 2, 30),
+                            languages=top_non_en,
+                        )
+                    except Exception:
+                        listing = []
+                    for m in listing:
+                        try:
+                            m["aiop_src"] = src
+                        except Exception:
+                            pass
+                    rng_gp = _rng_for(seed, content_type, f"international-{src}")
+                    shuffled_gp = listing[:]
+                    rng_gp.shuffle(shuffled_gp)
+                    lane_local_pools[src] = shuffled_gp
             elif k == "your-guilty-pleasures-extended":
                 include = {g for g in ["action", "horror", "romance", "comedy", "thriller"] if g in tg}
             elif k == "starring-your-favorite-actors":
                 include = set([g for g in tg[:2] if g]) or None
+                # Build lane entirely from top actors' filmographies
+                lane_local_pools = {"people": []}
+                # Collect cast from a small set of seeds
+                seeds: list[int] = []
+                for mm in media_list[:20]:
+                    ids = mm.get("ids") or {}
+                    tid = ids.get("trakt")
+                    if isinstance(tid, int):
+                        seeds.append(tid)
+                actor_counts: Counter[int] = Counter()
+                for sid in seeds[:10]:
+                    try:
+                        ppl = await self._trakt.fetch_people(
+                            content_type,
+                            trakt_id=sid,
+                            client_id=trakt_client_id,
+                            access_token=trakt_access_token,
+                        )
+                    except Exception:
+                        ppl = {}
+                    cast = ppl.get("cast") if isinstance(ppl, dict) else None
+                    if isinstance(cast, list):
+                        for role in cast:
+                            person = role.get("person") if isinstance(role, dict) else None
+                            if isinstance(person, dict):
+                                pid = person.get("ids", {}).get("trakt")
+                                if isinstance(pid, int):
+                                    actor_counts.update([pid])
+                top_actor_ids = [pid for pid, _ in actor_counts.most_common(5)]
+                filmography: list[dict[str, Any]] = []
+                for pid in top_actor_ids:
+                    try:
+                        credits = await self._trakt.fetch_person_credits(
+                            pid,
+                            content_type,
+                            client_id=trakt_client_id,
+                            access_token=trakt_access_token,
+                        )
+                    except Exception:
+                        credits = []
+                    for m in credits:
+                        try:
+                            m["aiop_src"] = "people"
+                        except Exception:
+                            pass
+                    filmography.extend(credits)
+                # Dedup by title/year
+                seen_py: set[tuple[str, int | None]] = set()
+                deduped: list[dict[str, Any]] = []
+                for m in filmography:
+                    t = (m.get("title") or "").strip().casefold()
+                    y = m.get("year") if isinstance(m.get("year"), int) else None
+                    kp = (t, y)
+                    if not t or kp in seen_py:
+                        continue
+                    seen_py.add(kp)
+                    deduped.append(m)
+                rng_people = _rng_for(seed, content_type, "people")
+                shuffled_people = deduped[:]
+                rng_people.shuffle(shuffled_people)
+                lane_local_pools["people"] = shuffled_people
             elif k == "visually-stunning-for-you":
                 include = {g for g in ["sci-fi", "fantasy", "adventure", "drama", "animation"] if g in tg}
             elif k == "background-watching":
@@ -2145,6 +2382,7 @@ class CatalogService:
                 rt_pred = lambda r: isinstance(r, int) and r > 0 and r <= 30
             elif k == "same-universe-different-story":
                 include = set([g for g in tg[:3] if g]) or None
+                prefer_related_order = True
             elif k == "animation-worth-your-time":
                 include = {"animation"}
             elif k == "documentaries-youll-like":
@@ -2157,6 +2395,7 @@ class CatalogService:
                 include = {top3} if top3 else None
             elif k == "franchises-you-started":
                 include = set([g for g in tg[:3] if g]) or None
+                prefer_related_order = True
             elif k == "independent-films":
                 include = {g for g in ["independent", "indie"] if g in tg}
                 if not include:
@@ -2190,11 +2429,15 @@ class CatalogService:
                 return fps
 
             watched_fps = set((watched.get("movie") if content_type == "movie" else watched.get("series")).fingerprints if watched else set())
+            served_fps = set((served or {}).get(content_type) or set())
             lane: list[dict[str, Any]] = []
 
             # Build candidate pools once per content type and memoize
             pool_order = ("recommended", "related", "trending", "popular")
-            if not all(candidate_cache[content_type].get(src) for src in pool_order):
+            if prefer_related_order:
+                pool_order = ("related", "recommended", "trending", "popular")
+            # Use lane-local pools if we constructed them above (e.g., international, people)
+            if lane_local_pools is None and not all(candidate_cache[content_type].get(src) for src in pool_order):
                 genres_filter = list(include or []) if include else None
                 lang_counts: Counter[str] = Counter(
                     [
@@ -2227,7 +2470,10 @@ class CatalogService:
                     except Exception:
                         pass
                     deduped_recs.append(m)
-                candidate_cache[content_type]["recommended"] = deduped_recs
+                rng_recs = _rng_for(seed, content_type, "recommended")
+                shuffled_recs = deduped_recs[:]
+                rng_recs.shuffle(shuffled_recs)
+                candidate_cache[content_type]["recommended"] = shuffled_recs
 
                 # Related to user's own history seeds (limit calls for perf)
                 seeds: list[int | str] = []
@@ -2236,8 +2482,9 @@ class CatalogService:
                     tid = ids.get("trakt")
                     if isinstance(tid, int):
                         seeds.append(tid)
-                    if len(seeds) >= 8:  # cap related lookups per type
-                        break
+                rng_seeds = _rng_for(seed, content_type, "related-seeds")
+                rng_seeds.shuffle(seeds)
+                seeds = seeds[:8]
                 related_collected: list[dict[str, Any]] = []
                 for sid in seeds:
                     try:
@@ -2265,7 +2512,10 @@ class CatalogService:
                         continue
                     seen_pairs_rel.add(kp)
                     deduped_rel.append(m)
-                candidate_cache[content_type]["related"] = deduped_rel
+                rng_rel = _rng_for(seed, content_type, "related")
+                shuffled_rel = deduped_rel[:]
+                rng_rel.shuffle(shuffled_rel)
+                candidate_cache[content_type]["related"] = shuffled_rel
 
                 # Fallback generic pools, smaller weights and later in order
                 for src in ("trending", "popular"):
@@ -2291,27 +2541,48 @@ class CatalogService:
                         except Exception:
                             pass
                         deduped_gp.append(m)
-                    candidate_cache[content_type][src] = deduped_gp
+                    rng_gp = _rng_for(seed, content_type, src)
+                    shuffled_gp = deduped_gp[:]
+                    rng_gp.shuffle(shuffled_gp)
+                    candidate_cache[content_type][src] = shuffled_gp
 
             # Selection strategy with retries to reach item_limit
-            def _try_collect(candidates: list[dict[str, Any]], *, apply_lane_filters: bool = True) -> None:
+            def _served_allowed(m: dict[str, Any]) -> bool:
+                # Allow a fraction of previously served items to keep the lane fresh
+                # but not starve the pool over time. Deterministic per run/lane/item.
+                title, year, imdb, trakt_id = _item_keyparts(m, content_type=content_type)
+                core = f"{content_type}:{definition.key}:{title}:{year}:{imdb}:{trakt_id or ''}:{seed}:served"
+                h = hashlib.sha256(core.encode("utf-8")).hexdigest()
+                val = int(h[:8], 16) / float(0xFFFFFFFF)
+                # ~30% chance to allow a previously served item in early phases
+                return val < 0.30
+
+            def _try_collect(
+                candidates: list[dict[str, Any]],
+                *,
+                include_genres: set[str] | None,
+                exclude_genres: set[str] | None,
+                language_pred,
+                runtime_pred,
+                allow_served: bool = False,
+            ) -> None:
                 nonlocal lane
                 if len(lane) >= item_limit:
                     return
-                items = candidates
-                if apply_lane_filters:
-                    items = apply_filters(
-                        candidates,
-                        include_genres=include,
-                        exclude_genres=exclude,
-                        language_pred=lang_pred,
-                        runtime_pred=rt_pred,
-                    )
+                items = apply_filters(
+                    candidates,
+                    include_genres=include_genres,
+                    exclude_genres=exclude_genres,
+                    language_pred=language_pred,
+                    runtime_pred=runtime_pred,
+                )
                 for m in items:
                     if len(lane) >= item_limit:
                         break
                     # Skip watched and session duplicates
                     if _fingerprints(m) & watched_fps:
+                        continue
+                    if not allow_served and (_fingerprints(m) & served_fps) and not _served_allowed(m):
                         continue
                     kp = _keypair(m)
                     if not kp[0] or kp in session_seen[content_type]:
@@ -2319,32 +2590,72 @@ class CatalogService:
                     session_seen[content_type].add(kp)
                     lane.append(m)
 
+            # Resolve pools for this lane (use local override if present)
+            pools = lane_local_pools if lane_local_pools is not None else candidate_cache[content_type]
+
             # Phase 1: strict filters, prefer recommended/related first
             for src in pool_order:
-                _try_collect(candidate_cache[content_type][src], apply_lane_filters=True)
+                _try_collect(
+                    pools.get(src, []),
+                    include_genres=include,
+                    exclude_genres=exclude,
+                    language_pred=lang_pred,
+                    runtime_pred=rt_pred,
+                )
                 if len(lane) >= item_limit:
                     break
             # Phase 2: relax language/runtime
             if len(lane) < item_limit:
                 saved_lang, saved_rt = lang_pred, rt_pred
-                lang_pred, rt_pred = None, None
+                # Keep language strict for dedicated international lane
+                new_lang = saved_lang if keep_language_strict else None
                 for src in pool_order:
-                    _try_collect(candidate_cache[content_type][src], apply_lane_filters=True)
+                    _try_collect(
+                        pools.get(src, []),
+                        include_genres=include,
+                        exclude_genres=exclude,
+                        language_pred=new_lang,
+                        runtime_pred=None,
+                    )
                     if len(lane) >= item_limit:
                         break
-                lang_pred, rt_pred = saved_lang, saved_rt
             # Phase 3: relax genres entirely
             if len(lane) < item_limit:
                 for src in pool_order:
-                    _try_collect(candidate_cache[content_type][src], apply_lane_filters=False)
+                    _try_collect(
+                        pools.get(src, []),
+                        include_genres=None,
+                        exclude_genres=None,
+                        # Keep language constraint for international lane
+                        language_pred=(lang_pred if keep_language_strict else None),
+                        runtime_pred=None,
+                    )
                     if len(lane) >= item_limit:
                         break
 
+            # Phase 4: final fill allowing previously served titles if still short
+            if len(lane) < item_limit and served_fps:
+                for src in pool_order:
+                    _try_collect(
+                        pools.get(src, []),
+                        include_genres=None,
+                        exclude_genres=None,
+                        language_pred=(lang_pred if keep_language_strict else None),
+                        runtime_pred=None,
+                        allow_served=True,
+                    )
+                    if len(lane) >= item_limit:
+                        break
+
+            noise = lambda m: _noise_for_item(m, content_type=content_type, lane_key=definition.key)
+            served_penalty = lambda m: (-0.25 if (_fingerprints(m) & served_fps) else 0.0)
             catalog = self._catalog_from_media(
-                # Re-rank by lightweight preference score for better relevance
                 sorted(
                     lane,
-                    key=lambda m: _relevance_score(m, content_type=content_type),
+                    key=lambda m: _relevance_score(m, content_type=content_type)
+                    + _lane_bonus(m, lane_key=definition.key, content_type=content_type)
+                    + noise(m)
+                    + served_penalty(m),
                     reverse=True,
                 ),
                 content_type=content_type,

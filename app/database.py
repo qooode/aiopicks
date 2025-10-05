@@ -105,8 +105,8 @@ class Database:
         )
         _ensure_column(
             "generator_mode",
-            "ALTER TABLE profiles ADD COLUMN generator_mode VARCHAR(32) DEFAULT 'openrouter'",
-            "UPDATE profiles SET generator_mode = 'openrouter' WHERE generator_mode IS NULL",
+            "ALTER TABLE profiles ADD COLUMN generator_mode VARCHAR(32) DEFAULT 'local'",
+            "UPDATE profiles SET generator_mode = 'local' WHERE generator_mode IS NULL",
         )
 
     async def dispose(self) -> None:
