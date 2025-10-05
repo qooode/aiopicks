@@ -2181,6 +2181,16 @@ class CatalogService:
             if k == "you-missed-these":
                 y = m.get("year") if isinstance(m.get("year"), int) else None
                 bonus -= _recency_score(y) * 0.6
+            # Independent films lane: favor titles explicitly tagged as indie/independent
+            if k == "independent-films" and content_type == "movie":
+                genres = {str(g).strip().lower() for g in (m.get("genres") or []) if g}
+                if {"indie", "independent"} & genres:
+                    bonus += 0.25
+            # Favorite actors lane: prioritize picks sourced from actor filmographies
+            if k == "starring-your-favorite-actors" and content_type == "movie":
+                src = str(m.get("aiop_src") or "").strip().lower()
+                if src == "people":
+                    bonus += 0.30
             return bonus
 
         for definition in definitions:
@@ -2340,9 +2350,10 @@ class CatalogService:
             elif k == "your-guilty-pleasures-extended":
                 include = {g for g in ["action", "horror", "romance", "comedy", "thriller"] if g in tg}
             elif k == "starring-your-favorite-actors":
-                include = set([g for g in tg[:2] if g]) or None
-                # Build lane entirely from top actors' filmographies
-                lane_local_pools = {"people": []}
+                # Do not constrain by user's top genres for actor-centric lane; rely on scoring instead
+                include = None
+                # Build lane from top actors' filmographies and add robust fallbacks
+                lane_local_pools = {src: [] for src in ("people", "recommended", "related", "trending", "popular")}
                 # Collect cast from a broader set of seeds to enrich actor pool
                 seeds: list[int] = []
                 for mm in media_list[:80]:
@@ -2402,6 +2413,82 @@ class CatalogService:
                 shuffled_people = deduped[:]
                 rng_people.shuffle(shuffled_people)
                 lane_local_pools["people"] = shuffled_people
+                # Personalized recommendations as fallback
+                try:
+                    recs = await self._trakt.fetch_recommendations(
+                        content_type,
+                        limit=max(item_limit * 3, 60),
+                        client_id=trakt_client_id,
+                        access_token=trakt_access_token,
+                    )
+                except Exception:
+                    recs = []
+                for m in recs:
+                    try:
+                        m["aiop_src"] = "recommended"
+                    except Exception:
+                        pass
+                rng_recs = _rng_for(seed, content_type, "people-recommended")
+                shuffled_recs = recs[:]
+                rng_recs.shuffle(shuffled_recs)
+                lane_local_pools["recommended"] = shuffled_recs
+                # Related from user's recent seeds
+                rel_collected: list[dict[str, Any]] = []
+                rel_seeds = seeds[:]
+                rng_rel_seeds = _rng_for(seed, content_type, "people-related-seeds")
+                rng_rel_seeds.shuffle(rel_seeds)
+                for sid in rel_seeds[:8]:
+                    try:
+                        rel = await self._trakt.fetch_related(
+                            content_type,
+                            trakt_id=sid,
+                            limit=min(max(item_limit // 2, 20), 80),
+                            client_id=trakt_client_id,
+                            access_token=trakt_access_token,
+                        )
+                    except Exception:
+                        rel = []
+                    for m in rel:
+                        try:
+                            m["aiop_src"] = "related"
+                        except Exception:
+                            pass
+                    rel_collected.extend(rel)
+                seen_rel: set[tuple[str, int | None]] = set()
+                dedup_rel: list[dict[str, Any]] = []
+                for m in rel_collected:
+                    t = (m.get("title") or "").strip().casefold()
+                    y = m.get("year") if isinstance(m.get("year"), int) else None
+                    kp = (t, y)
+                    if not t or kp in seen_rel:
+                        continue
+                    seen_rel.add(kp)
+                    dedup_rel.append(m)
+                rng_rel = _rng_for(seed, content_type, "people-related")
+                shuffled_rel = dedup_rel[:]
+                rng_rel.shuffle(shuffled_rel)
+                lane_local_pools["related"] = shuffled_rel
+                # Generic trending/popular as final fallback
+                for src in ("trending", "popular"):
+                    try:
+                        listing = await self._trakt.fetch_listing(
+                            content_type,
+                            list_type=src,
+                            limit=max(item_limit * 2, 30),
+                            client_id=trakt_client_id,
+                            access_token=trakt_access_token,
+                        )
+                    except Exception:
+                        listing = []
+                    for m in listing:
+                        try:
+                            m["aiop_src"] = src
+                        except Exception:
+                            pass
+                    rng_gp = _rng_for(seed, content_type, f"people-{src}")
+                    shuffled_gp = listing[:]
+                    rng_gp.shuffle(shuffled_gp)
+                    lane_local_pools[src] = shuffled_gp
             elif k == "visually-stunning-for-you":
                 include = {g for g in ["sci-fi", "fantasy", "adventure", "drama", "animation"] if g in tg}
             elif k == "background-watching":
@@ -2674,14 +2761,13 @@ class CatalogService:
                 include = set([g for g in tg[:3] if g]) or None
                 prefer_related_order = True
             elif k == "independent-films":
-                # Always prioritize indie content by explicit genre tags.
-                # Keep this genre requirement strict even when relaxing other filters
-                # so the lane consistently surfaces independent films.
+                # Prefer indie-tagged items but do not make the genre constraint hard; use scoring to bias.
                 include = {"independent", "indie"}
-                keep_genre_strict = True
-                # Build lane-local pools focused on indie; Trakt commonly uses 'indie'
+                keep_genre_strict = False
+                prefer_related_order = True
+                # Build lane-local pools focused on indie; add related and safe fallbacks
                 lane_local_pools = {src: [] for src in ("recommended", "related", "trending", "popular")}
-                # Personalized recommendations (unfiltered; lane filters will retain only indie)
+                # Personalized recommendations (unfiltered; lane filters and bonuses will bias indie)
                 try:
                     recs = await self._trakt.fetch_recommendations(
                         content_type,
@@ -2692,7 +2778,7 @@ class CatalogService:
                 except Exception:
                     recs = []
                 lane_local_pools["recommended"] = recs
-                # Genre-filtered paginated listings for indie pool. Try 'indie' then 'independent'.
+                # Genre-filtered paginated listings for an indie pool. Try 'indie' then 'independent'.
                 indie_pool: list[dict[str, Any]] = []
                 try:
                     indie_pool = await self._trakt.fetch_listing_paginated(
@@ -2729,9 +2815,68 @@ class CatalogService:
                         continue
                     seen_ip.add(kp)
                     deduped_ip.append(m)
-                # Split across sources to keep ordering stable
                 lane_local_pools["trending"] = deduped_ip[:]
-                lane_local_pools["popular"] = []
+                # Related from user's own seeds to surface similar low-profile films
+                rel_collected: list[dict[str, Any]] = []
+                rel_seeds: list[int] = []
+                for mm in media_list:
+                    ids = mm.get("ids") or {}
+                    tid = ids.get("trakt")
+                    if isinstance(tid, int):
+                        rel_seeds.append(tid)
+                rng_rel_seeds = _rng_for(seed, content_type, "indie-related-seeds")
+                rng_rel_seeds.shuffle(rel_seeds)
+                for sid in rel_seeds[:8]:
+                    try:
+                        rel = await self._trakt.fetch_related(
+                            content_type,
+                            trakt_id=sid,
+                            limit=min(max(item_limit // 2, 20), 80),
+                            client_id=trakt_client_id,
+                            access_token=trakt_access_token,
+                        )
+                    except Exception:
+                        rel = []
+                    for m in rel:
+                        try:
+                            m["aiop_src"] = "related"
+                        except Exception:
+                            pass
+                    rel_collected.extend(rel)
+                seen_rel_i: set[tuple[str, int | None]] = set()
+                dedup_rel_i: list[dict[str, Any]] = []
+                for m in rel_collected:
+                    t = (m.get("title") or "").strip().casefold()
+                    y = m.get("year") if isinstance(m.get("year"), int) else None
+                    kp = (t, y)
+                    if not t or kp in seen_rel_i:
+                        continue
+                    seen_rel_i.add(kp)
+                    dedup_rel_i.append(m)
+                rng_rel_i = _rng_for(seed, content_type, "indie-related")
+                shuffled_rel_i = dedup_rel_i[:]
+                rng_rel_i.shuffle(shuffled_rel_i)
+                lane_local_pools["related"] = shuffled_rel_i
+                # Provide generic popular fallback to avoid starvation when tags are missing
+                try:
+                    pop = await self._trakt.fetch_listing(
+                        content_type,
+                        list_type="popular",
+                        limit=max(item_limit * 2, 40),
+                        client_id=trakt_client_id,
+                        access_token=trakt_access_token,
+                    )
+                except Exception:
+                    pop = []
+                for m in pop:
+                    try:
+                        m["aiop_src"] = "popular"
+                    except Exception:
+                        pass
+                rng_pop_i = _rng_for(seed, content_type, "indie-popular")
+                shuffled_pop_i = pop[:]
+                rng_pop_i.shuffle(shuffled_pop_i)
+                lane_local_pools["popular"] = shuffled_pop_i
 
             # Build unseen candidates from Trakt listings, filtered by lane rules
             def _keypair(m: dict[str, Any]) -> tuple[str, int | None]:
@@ -2999,6 +3144,19 @@ class CatalogService:
                     )
                     if len(lane) >= item_limit:
                         break
+
+            # For the indie lane, ensure we fill as many indie-tagged titles as possible,
+            # only topping up with non-indie if the pool is sparse.
+            if definition.key == "independent-films" and content_type == "movie" and lane:
+                def _is_indie(m: dict[str, Any]) -> bool:
+                    genres = {str(g).strip().lower() for g in (m.get("genres") or []) if g}
+                    return bool({"indie", "independent"} & genres)
+                indie_items = [m for m in lane if _is_indie(m)]
+                if len(indie_items) >= item_limit:
+                    lane = indie_items[:]
+                else:
+                    non_indie = [m for m in lane if m not in indie_items]
+                    lane = indie_items + non_indie[: max(0, item_limit - len(indie_items))]
 
             noise = lambda m: _noise_for_item(m, content_type=content_type, lane_key=definition.key)
             served_penalty = lambda m: (-0.25 if (_fingerprints(m) & served_fps) else 0.0)
