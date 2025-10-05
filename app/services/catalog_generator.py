@@ -2168,14 +2168,15 @@ class CatalogService:
                 rt = m.get("runtime") if isinstance(m.get("runtime"), int) else m.get("runtime_minutes")
                 if isinstance(rt, int) and rt >= 110:
                     bonus += 0.25
-            # Background watching prefers short episodes and light genres
+            # Background watching prefers short episodes; avoid forcing specific genres
             if k == "background-watching" and content_type == "series":
                 rt = m.get("runtime") if isinstance(m.get("runtime"), int) else None
                 if isinstance(rt, int) and rt <= 30:
                     bonus += 0.2
                 genres = {str(g).strip().lower() for g in (m.get("genres") or []) if g}
-                if {"comedy", "animation"} & genres:
-                    bonus += 0.15
+                # Light, easy-to-follow styles still get a small nudge
+                if {"comedy", "animation", "reality", "talk-show", "game-show"} & genres:
+                    bonus += 0.12
             # You missed these: de-emphasize recent
             if k == "you-missed-these":
                 y = m.get("year") if isinstance(m.get("year"), int) else None
@@ -2195,6 +2196,7 @@ class CatalogService:
             rt_pred = None
             # Lane-specific selection behavior flags
             keep_language_strict = False
+            keep_genre_strict = False
             prefer_related_order = False
             lane_local_pools: dict[str, list[dict[str, Any]]] | None = None
 
@@ -2378,15 +2380,218 @@ class CatalogService:
             elif k == "visually-stunning-for-you":
                 include = {g for g in ["sci-fi", "fantasy", "adventure", "drama", "animation"] if g in tg}
             elif k == "background-watching":
-                include = {g for g in ["comedy", "animation"] if g in tg}
-                rt_pred = lambda r: isinstance(r, int) and r > 0 and r <= 30
+                # Use the user's top genres rather than forcing comedy/animation only.
+                # Keep episodes short to suit background viewing and prefer familiar/related picks.
+                include = set([g for g in tg[:4] if g]) or None
+                rt_pred = lambda r: isinstance(r, int) and r > 0 and r <= 40
+                prefer_related_order = True
             elif k == "same-universe-different-story":
                 include = set([g for g in tg[:3] if g]) or None
                 prefer_related_order = True
+                # Build a lane-local 'related' pool that emphasizes true shared-universe entries:
+                # 1) Start from Trakt's related titles for user's recent seeds
+                # 2) Augment with titles that appear in the credits of multiple principal cast members
+                #    of those seeds (e.g., spin-offs with overlapping actors/characters)
+                lane_local_pools = {src: [] for src in ("recommended", "related", "trending", "popular")}
+
+                # Personalized recommendations (universe lane still benefits from personal recs as fallback)
+                try:
+                    recs = await self._trakt.fetch_recommendations(
+                        content_type,
+                        limit=max(item_limit * 3, 50),
+                        client_id=trakt_client_id,
+                        access_token=trakt_access_token,
+                    )
+                except Exception:
+                    recs = []
+                for m in recs:
+                    try:
+                        m["aiop_src"] = "recommended"
+                    except Exception:
+                        pass
+                rng_recs = _rng_for(seed, content_type, "universe-recommended")
+                shuffled_recs = recs[:]
+                rng_recs.shuffle(shuffled_recs)
+                lane_local_pools["recommended"] = shuffled_recs
+
+                # Related: gather from user's own seeds
+                seeds: list[int] = []
+                for mm in media_list:
+                    ids = mm.get("ids") or {}
+                    tid = ids.get("trakt")
+                    if isinstance(tid, int):
+                        seeds.append(tid)
+                rng_seeds = _rng_for(seed, content_type, "universe-related-seeds")
+                rng_seeds.shuffle(seeds)
+                seeds = seeds[:8]
+
+                base_related: list[dict[str, Any]] = []
+                for sid in seeds:
+                    try:
+                        rel = await self._trakt.fetch_related(
+                            content_type,
+                            trakt_id=sid,
+                            limit=20,
+                            client_id=trakt_client_id,
+                            access_token=trakt_access_token,
+                        )
+                    except Exception:
+                        rel = []
+                    for m in rel:
+                        try:
+                            m["aiop_src"] = "related"
+                        except Exception:
+                            pass
+                    base_related.extend(rel)
+                # Dedup base related by (title, year)
+                seen_pairs_rel: set[tuple[str, int | None]] = set()
+                deduped_rel: list[dict[str, Any]] = []
+                for m in base_related:
+                    t = (m.get("title") or "").strip().casefold()
+                    y = m.get("year") if isinstance(m.get("year"), int) else None
+                    kp = (t, y)
+                    if not t or kp in seen_pairs_rel:
+                        continue
+                    seen_pairs_rel.add(kp)
+                    deduped_rel.append(m)
+
+                # Universe augmentation via shared-cast filmography
+                # Collect principal cast across a subset of seeds
+                actor_counts: Counter[int] = Counter()
+                seed_titles: set[tuple[str, int | None]] = set()
+                for mm in media_list[:12]:  # cap for performance
+                    ids = mm.get("ids") or {}
+                    tid = ids.get("trakt")
+                    title = (mm.get("title") or "").strip().casefold()
+                    year = mm.get("year") if isinstance(mm.get("year"), int) else None
+                    if title:
+                        seed_titles.add((title, year))
+                    if not isinstance(tid, int):
+                        continue
+                    try:
+                        ppl = await self._trakt.fetch_people(
+                            content_type,
+                            trakt_id=tid,
+                            client_id=trakt_client_id,
+                            access_token=trakt_access_token,
+                        )
+                    except Exception:
+                        ppl = {}
+                    cast = ppl.get("cast") if isinstance(ppl, dict) else None
+                    if isinstance(cast, list):
+                        # Use order if present; otherwise natural order is fine
+                        for role in cast[:10]:  # take top-billed subset
+                            person = role.get("person") if isinstance(role, dict) else None
+                            if isinstance(person, dict):
+                                pid = person.get("ids", {}).get("trakt")
+                                if isinstance(pid, int):
+                                    actor_counts.update([pid])
+
+                top_actor_ids = [pid for pid, _ in actor_counts.most_common(8)]
+                credit_counts: dict[tuple[str, int | None], set[int]] = {}
+                for pid in top_actor_ids:
+                    try:
+                        credits = await self._trakt.fetch_person_credits(
+                            pid,
+                            content_type,
+                            client_id=trakt_client_id,
+                            access_token=trakt_access_token,
+                        )
+                    except Exception:
+                        credits = []
+                    for m in credits:
+                        t = (m.get("title") or "").strip().casefold()
+                        if not t:
+                            continue
+                        y = m.get("year") if isinstance(m.get("year"), int) else None
+                        kp = (t, y)
+                        # Skip the seed shows themselves
+                        if kp in seed_titles:
+                            continue
+                        credit_counts.setdefault(kp, set()).add(pid)
+
+                # Choose titles with at least two distinct shared actors or present in related
+                related_set = {
+                    ((m.get("title") or "").strip().casefold(),
+                     m.get("year") if isinstance(m.get("year"), int) else None)
+                    for m in deduped_rel
+                }
+                universe_candidates: list[dict[str, Any]] = []
+                # Map from keypair to exemplar media dict from credits
+                sample_by_kp: dict[tuple[str, int | None], dict[str, Any]] = {}
+                for pid in top_actor_ids:
+                    try:
+                        credits = await self._trakt.fetch_person_credits(
+                            pid,
+                            content_type,
+                            client_id=trakt_client_id,
+                            access_token=trakt_access_token,
+                        )
+                    except Exception:
+                        credits = []
+                    for m in credits:
+                        t = (m.get("title") or "").strip().casefold()
+                        if not t:
+                            continue
+                        y = m.get("year") if isinstance(m.get("year"), int) else None
+                        kp = (t, y)
+                        if kp in seed_titles:
+                            continue
+                        shared = credit_counts.get(kp) or set()
+                        if (len(shared) >= 2) or (kp in related_set):
+                            if kp not in sample_by_kp:
+                                # annotate source for later scoring/debug
+                                try:
+                                    m["aiop_src"] = "people"
+                                except Exception:
+                                    pass
+                                sample_by_kp[kp] = m
+                universe_candidates = list(sample_by_kp.values())
+
+                # Merge universe candidates ahead of base related
+                # Ensure no duplicates (by title/year)
+                seen_merge: set[tuple[str, int | None]] = set()
+                merged_related: list[dict[str, Any]] = []
+                for m in universe_candidates + deduped_rel:
+                    t = (m.get("title") or "").strip().casefold()
+                    y = m.get("year") if isinstance(m.get("year"), int) else None
+                    kp = (t, y)
+                    if not t or kp in seen_merge:
+                        continue
+                    seen_merge.add(kp)
+                    merged_related.append(m)
+                rng_rel = _rng_for(seed, content_type, "universe-related")
+                shuffled_rel = merged_related[:]
+                rng_rel.shuffle(shuffled_rel)
+                lane_local_pools["related"] = shuffled_rel
+
+                # Fallback generic pools
+                for src in ("trending", "popular"):
+                    try:
+                        listing = await self._trakt.fetch_listing(
+                            content_type,
+                            list_type=src,
+                            limit=max(item_limit * 2, 30),
+                        )
+                    except Exception:
+                        listing = []
+                    for m in listing:
+                        try:
+                            m["aiop_src"] = src
+                        except Exception:
+                            pass
+                    rng_gp = _rng_for(seed, content_type, f"universe-{src}")
+                    shuffled_gp = listing[:]
+                    rng_gp.shuffle(shuffled_gp)
+                    lane_local_pools[src] = shuffled_gp
             elif k == "animation-worth-your-time":
                 include = {"animation"}
+                # Keep this lane strictly animation; do not relax genre in later phases
+                keep_genre_strict = True
             elif k == "documentaries-youll-like":
                 include = {"documentary"}
+                # For this lane we must only show documentaries; do not relax genre.
+                keep_genre_strict = True
             elif k == "your-top-genre":
                 include = {top1} if top1 else None
             elif k == "your-second-genre":
@@ -2397,9 +2602,11 @@ class CatalogService:
                 include = set([g for g in tg[:3] if g]) or None
                 prefer_related_order = True
             elif k == "independent-films":
-                include = {g for g in ["independent", "indie"] if g in tg}
-                if not include:
-                    lang_pred = lambda lang: isinstance(lang, str) and lang.lower() != "en"
+                # Always prioritize indie content by explicit genre tags.
+                # Keep this genre requirement strict even when relaxing other filters
+                # so the lane consistently surfaces independent films.
+                include = {"independent", "indie"}
+                keep_genre_strict = True
 
             # Build unseen candidates from Trakt listings, filtered by lane rules
             def _keypair(m: dict[str, Any]) -> tuple[str, int | None]:
@@ -2619,12 +2826,12 @@ class CatalogService:
                     )
                     if len(lane) >= item_limit:
                         break
-            # Phase 3: relax genres entirely
+            # Phase 3: relax genres entirely (except lanes where genre must stay strict)
             if len(lane) < item_limit:
                 for src in pool_order:
                     _try_collect(
                         pools.get(src, []),
-                        include_genres=None,
+                        include_genres=(include if keep_genre_strict else None),
                         exclude_genres=None,
                         # Keep language constraint for international lane
                         language_pred=(lang_pred if keep_language_strict else None),
@@ -2638,7 +2845,7 @@ class CatalogService:
                 for src in pool_order:
                     _try_collect(
                         pools.get(src, []),
-                        include_genres=None,
+                        include_genres=(include if keep_genre_strict else None),
                         exclude_genres=None,
                         language_pred=(lang_pred if keep_language_strict else None),
                         runtime_pred=None,
