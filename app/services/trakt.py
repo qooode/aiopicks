@@ -240,6 +240,102 @@ class TraktClient:
                 normalized.append(entry)
         return normalized
 
+    async def fetch_listing_paginated(
+        self,
+        content_type: str,
+        *,
+        list_type: str = "trending",
+        total_limit: int = 300,
+        genres: list[str] | None = None,
+        languages: list[str] | None = None,
+        years: str | None = None,
+        client_id: str | None = None,
+        access_token: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch multiple pages of a Trakt listing (trending/popular) until total_limit.
+
+        Dedupes across pages and normalizes to media dicts. Each page is capped at 100.
+        """
+
+        kind = "movies" if content_type == "movie" else "shows"
+        path = f"/{kind}/{list_type}"
+        collected: list[dict[str, Any]] = []
+        seen_pairs: set[tuple[str, int | None]] = set()
+        page = 1
+        per_page = 100
+
+        def _kp(m: dict[str, Any]) -> tuple[str, int | None]:
+            title = (m.get("title") or "").strip().casefold()
+            year = m.get("year") if isinstance(m.get("year"), int) else None
+            return (title, year)
+
+        target = max(1, int(total_limit or 0))
+        while len(collected) < target:
+            params: dict[str, Any] = {
+                "extended": "full",
+                "limit": per_page,
+                "page": page,
+            }
+            if genres:
+                try:
+                    cleaned = ",".join(sorted({g.strip().lower() for g in genres if g}))
+                    if cleaned:
+                        params["genres"] = cleaned
+                except Exception:
+                    pass
+            if languages:
+                try:
+                    cleaned = ",".join(sorted({l.strip().lower() for l in languages if l}))
+                    if cleaned:
+                        params["languages"] = cleaned
+                except Exception:
+                    pass
+            if years:
+                params["years"] = years
+
+            response = await self._client.get(
+                path,
+                headers=self._headers(client_id=client_id, access_token=access_token),
+                params=params,
+            )
+            if response.status_code >= 400:
+                logger.warning(
+                    "Failed to fetch Trakt %s listing page %s for %s: %s",
+                    list_type,
+                    page,
+                    content_type,
+                    response.text,
+                )
+                break
+            data = response.json()
+            if not isinstance(data, list) or not data:
+                break
+
+            key = "movie" if content_type == "movie" else "show"
+            page_items: list[dict[str, Any]] = []
+            for entry in data:
+                if isinstance(entry, dict) and key in entry and isinstance(entry[key], dict):
+                    page_items.append(entry[key])
+                elif isinstance(entry, dict) and entry.get("title") and entry.get("ids"):
+                    page_items.append(entry)
+
+            added = 0
+            for m in page_items:
+                kp = _kp(m)
+                if not kp[0] or kp in seen_pairs:
+                    continue
+                seen_pairs.add(kp)
+                collected.append(m)
+                added += 1
+                if len(collected) >= target:
+                    break
+
+            if added < per_page:
+                break
+            page += 1
+
+        return collected
+
     async def fetch_recommendations(
         self,
         content_type: str,
@@ -285,6 +381,79 @@ class TraktClient:
             if isinstance(entry, dict) and entry.get("title") and entry.get("ids"):
                 normalized.append(entry)
         return normalized
+
+    async def fetch_related_paginated(
+        self,
+        content_type: str,
+        *,
+        trakt_id: int | str,
+        total_limit: int = 100,
+        client_id: str | None = None,
+        access_token: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch multiple pages of titles related to a specific Trakt item.
+
+        Dedupes and normalizes; each page is capped at 100.
+        """
+
+        kind = "movies" if content_type == "movie" else "shows"
+        path = f"/{kind}/{trakt_id}/related"
+        collected: list[dict[str, Any]] = []
+        seen_pairs: set[tuple[str, int | None]] = set()
+        page = 1
+        per_page = 100
+
+        def _kp(m: dict[str, Any]) -> tuple[str, int | None]:
+            title = (m.get("title") or "").strip().casefold()
+            year = m.get("year") if isinstance(m.get("year"), int) else None
+            return (title, year)
+
+        target = max(1, int(total_limit or 0))
+        while len(collected) < target:
+            params: dict[str, Any] = {
+                "limit": per_page,
+                "page": page,
+                "extended": "full",
+            }
+            response = await self._client.get(
+                path,
+                headers=self._headers(client_id=client_id, access_token=access_token),
+                params=params,
+            )
+            if response.status_code >= 400:
+                logger.warning(
+                    "Failed to fetch Trakt related page %s for %s %s: %s",
+                    page,
+                    content_type,
+                    trakt_id,
+                    response.text,
+                )
+                break
+            data = response.json()
+            if not isinstance(data, list) or not data:
+                break
+
+            page_items: list[dict[str, Any]] = []
+            for entry in data:
+                if isinstance(entry, dict) and entry.get("title") and entry.get("ids"):
+                    page_items.append(entry)
+
+            added = 0
+            for m in page_items:
+                kp = _kp(m)
+                if not kp[0] or kp in seen_pairs:
+                    continue
+                seen_pairs.add(kp)
+                collected.append(m)
+                added += 1
+                if len(collected) >= target:
+                    break
+
+            if added < per_page:
+                break
+            page += 1
+
+        return collected
 
     async def fetch_related(
         self,

@@ -2233,9 +2233,10 @@ class CatalogService:
                 lane_local_pools = {src: [] for src in ("recommended", "related", "trending", "popular")}
                 # Personalized recs (no language filter server-side)
                 try:
+                    # Broaden personalized pool for large lane sizes (hard cap 100 by API)
                     recs = await self._trakt.fetch_recommendations(
                         content_type,
-                        limit=max(item_limit * 3, 50),
+                        limit=min(max(item_limit * 5, 100), 100),
                         client_id=trakt_client_id,
                         access_token=trakt_access_token,
                     )
@@ -2259,17 +2260,29 @@ class CatalogService:
                         seeds.append(tid)
                 rng_seeds = _rng_for(seed, content_type, "international-related-seeds")
                 rng_seeds.shuffle(seeds)
-                seeds = seeds[:8]
+                # Use more seeds for related pools when requesting many items
+                max_seeds = 8 if item_limit <= 30 else (12 if item_limit <= 60 else 20)
+                seeds = seeds[: max_seeds]
                 related_collected: list[dict[str, Any]] = []
                 for sid in seeds:
                     try:
-                        rel = await self._trakt.fetch_related(
-                            content_type,
-                            trakt_id=sid,
-                            limit=20,
-                            client_id=trakt_client_id,
-                            access_token=trakt_access_token,
-                        )
+                        # Use paginated related for large requests to expand pool per seed
+                        if item_limit > 50:
+                            rel = await self._trakt.fetch_related_paginated(
+                                content_type,
+                                trakt_id=sid,
+                                total_limit=min(max(item_limit // 2, 60), 200),
+                                client_id=trakt_client_id,
+                                access_token=trakt_access_token,
+                            )
+                        else:
+                            rel = await self._trakt.fetch_related(
+                                content_type,
+                                trakt_id=sid,
+                                limit=min(max(item_limit // 2, 20), 80),
+                                client_id=trakt_client_id,
+                                access_token=trakt_access_token,
+                            )
                     except Exception:
                         rel = []
                     for m in rel:
@@ -2295,12 +2308,24 @@ class CatalogService:
                 # Trending/popular with non-English language filter
                 for src in ("trending", "popular"):
                     try:
-                        listing = await self._trakt.fetch_listing(
-                            content_type,
-                            list_type=src,
-                            limit=max(item_limit * 2, 30),
-                            languages=top_non_en,
-                        )
+                        if item_limit > 50:
+                            listing = await self._trakt.fetch_listing_paginated(
+                                content_type,
+                                list_type=src,
+                                total_limit=min(max(item_limit * 6, 200), 800),
+                                languages=top_non_en,
+                                client_id=trakt_client_id,
+                                access_token=trakt_access_token,
+                            )
+                        else:
+                            listing = await self._trakt.fetch_listing(
+                                content_type,
+                                list_type=src,
+                                limit=max(item_limit * 2, 30),
+                                languages=top_non_en,
+                                client_id=trakt_client_id,
+                                access_token=trakt_access_token,
+                            )
                     except Exception:
                         listing = []
                     for m in listing:
@@ -2398,7 +2423,7 @@ class CatalogService:
                 try:
                     recs = await self._trakt.fetch_recommendations(
                         content_type,
-                        limit=max(item_limit * 3, 50),
+                        limit=min(max(item_limit * 5, 100), 100),
                         client_id=trakt_client_id,
                         access_token=trakt_access_token,
                     )
@@ -2428,13 +2453,22 @@ class CatalogService:
                 base_related: list[dict[str, Any]] = []
                 for sid in seeds:
                     try:
-                        rel = await self._trakt.fetch_related(
-                            content_type,
-                            trakt_id=sid,
-                            limit=20,
-                            client_id=trakt_client_id,
-                            access_token=trakt_access_token,
-                        )
+                        if item_limit > 50:
+                            rel = await self._trakt.fetch_related_paginated(
+                                content_type,
+                                trakt_id=sid,
+                                total_limit=min(max(item_limit // 2, 60), 200),
+                                client_id=trakt_client_id,
+                                access_token=trakt_access_token,
+                            )
+                        else:
+                            rel = await self._trakt.fetch_related(
+                                content_type,
+                                trakt_id=sid,
+                                limit=20,
+                                client_id=trakt_client_id,
+                                access_token=trakt_access_token,
+                            )
                     except Exception:
                         rel = []
                     for m in rel:
@@ -2568,11 +2602,22 @@ class CatalogService:
                 # Fallback generic pools
                 for src in ("trending", "popular"):
                     try:
-                        listing = await self._trakt.fetch_listing(
-                            content_type,
-                            list_type=src,
-                            limit=max(item_limit * 2, 30),
-                        )
+                        if item_limit > 50:
+                            listing = await self._trakt.fetch_listing_paginated(
+                                content_type,
+                                list_type=src,
+                                total_limit=min(max(item_limit * 6, 200), 800),
+                                client_id=trakt_client_id,
+                                access_token=trakt_access_token,
+                            )
+                        else:
+                            listing = await self._trakt.fetch_listing(
+                                content_type,
+                                list_type=src,
+                                limit=max(item_limit * 2, 30),
+                                client_id=trakt_client_id,
+                                access_token=trakt_access_token,
+                            )
                     except Exception:
                         listing = []
                     for m in listing:
@@ -2727,13 +2772,27 @@ class CatalogService:
                 # Fallback generic pools, smaller weights and later in order
                 for src in ("trending", "popular"):
                     try:
-                        listing = await self._trakt.fetch_listing(
-                            content_type,
-                            list_type=src,
-                            limit=max(item_limit * 2, 30),
-                            genres=genres_filter,
-                            languages=top_langs or None,
-                        )
+                        # For larger requests, page through listings to gather a bigger unique pool
+                        if item_limit > 50:
+                            listing = await self._trakt.fetch_listing_paginated(
+                                content_type,
+                                list_type=src,
+                                total_limit=min(max(item_limit * 6, 200), 800),
+                                genres=genres_filter,
+                                languages=(top_langs or None) if item_limit <= 80 else None,
+                                client_id=trakt_client_id,
+                                access_token=trakt_access_token,
+                            )
+                        else:
+                            listing = await self._trakt.fetch_listing(
+                                content_type,
+                                list_type=src,
+                                limit=min(max(item_limit * 2, 30), 100),
+                                genres=genres_filter,
+                                languages=top_langs or None,
+                                client_id=trakt_client_id,
+                                access_token=trakt_access_token,
+                            )
                     except Exception:
                         listing = []
                     seen_pairs_gp: set[tuple[str, int | None]] = set()
