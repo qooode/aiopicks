@@ -2343,15 +2343,15 @@ class CatalogService:
                 include = set([g for g in tg[:2] if g]) or None
                 # Build lane entirely from top actors' filmographies
                 lane_local_pools = {"people": []}
-                # Collect cast from a small set of seeds
+                # Collect cast from a broader set of seeds to enrich actor pool
                 seeds: list[int] = []
-                for mm in media_list[:20]:
+                for mm in media_list[:80]:
                     ids = mm.get("ids") or {}
                     tid = ids.get("trakt")
                     if isinstance(tid, int):
                         seeds.append(tid)
                 actor_counts: Counter[int] = Counter()
-                for sid in seeds[:10]:
+                for sid in seeds[:24]:
                     try:
                         ppl = await self._trakt.fetch_people(
                             content_type,
@@ -2363,13 +2363,13 @@ class CatalogService:
                         ppl = {}
                     cast = ppl.get("cast") if isinstance(ppl, dict) else None
                     if isinstance(cast, list):
-                        for role in cast:
+                        for role in cast[:25]:
                             person = role.get("person") if isinstance(role, dict) else None
                             if isinstance(person, dict):
                                 pid = person.get("ids", {}).get("trakt")
                                 if isinstance(pid, int):
                                     actor_counts.update([pid])
-                top_actor_ids = [pid for pid, _ in actor_counts.most_common(5)]
+                top_actor_ids = [pid for pid, _ in actor_counts.most_common(15)]
                 filmography: list[dict[str, Any]] = []
                 for pid in top_actor_ids:
                     try:
@@ -2637,6 +2637,33 @@ class CatalogService:
                 include = {"documentary"}
                 # For this lane we must only show documentaries; do not relax genre.
                 keep_genre_strict = True
+                # Build lane-local pools specifically filtered to documentaries to avoid starvation
+                lane_local_pools = {src: [] for src in ("recommended", "related", "trending", "popular")}
+                # Personalized recommendations (unfiltered; lane filters will keep only docs)
+                try:
+                    recs = await self._trakt.fetch_recommendations(
+                        content_type,
+                        limit=100,
+                        client_id=trakt_client_id,
+                        access_token=trakt_access_token,
+                    )
+                except Exception:
+                    recs = []
+                lane_local_pools["recommended"] = recs
+                # Use genre-filtered paginated listings for a large documentary pool
+                for src in ("trending", "popular"):
+                    try:
+                        listing = await self._trakt.fetch_listing_paginated(
+                            content_type,
+                            list_type=src,
+                            total_limit=600,
+                            genres=["documentary"],
+                            client_id=trakt_client_id,
+                            access_token=trakt_access_token,
+                        )
+                    except Exception:
+                        listing = []
+                    lane_local_pools[src] = listing
             elif k == "your-top-genre":
                 include = {top1} if top1 else None
             elif k == "your-second-genre":
@@ -2652,6 +2679,59 @@ class CatalogService:
                 # so the lane consistently surfaces independent films.
                 include = {"independent", "indie"}
                 keep_genre_strict = True
+                # Build lane-local pools focused on indie; Trakt commonly uses 'indie'
+                lane_local_pools = {src: [] for src in ("recommended", "related", "trending", "popular")}
+                # Personalized recommendations (unfiltered; lane filters will retain only indie)
+                try:
+                    recs = await self._trakt.fetch_recommendations(
+                        content_type,
+                        limit=100,
+                        client_id=trakt_client_id,
+                        access_token=trakt_access_token,
+                    )
+                except Exception:
+                    recs = []
+                lane_local_pools["recommended"] = recs
+                # Genre-filtered paginated listings for indie pool. Try 'indie' then 'independent'.
+                indie_pool: list[dict[str, Any]] = []
+                try:
+                    indie_pool = await self._trakt.fetch_listing_paginated(
+                        content_type,
+                        list_type="trending",
+                        total_limit=600,
+                        genres=["indie"],
+                        client_id=trakt_client_id,
+                        access_token=trakt_access_token,
+                    )
+                except Exception:
+                    indie_pool = []
+                if len(indie_pool) < 50:
+                    try:
+                        more = await self._trakt.fetch_listing_paginated(
+                            content_type,
+                            list_type="popular",
+                            total_limit=600,
+                            genres=["independent"],
+                            client_id=trakt_client_id,
+                            access_token=trakt_access_token,
+                        )
+                        indie_pool.extend(more)
+                    except Exception:
+                        pass
+                # Dedup indie pool by (title, year)
+                seen_ip: set[tuple[str, int | None]] = set()
+                deduped_ip: list[dict[str, Any]] = []
+                for m in indie_pool:
+                    t = (m.get("title") or "").strip().casefold()
+                    y = m.get("year") if isinstance(m.get("year"), int) else None
+                    kp = (t, y)
+                    if not t or kp in seen_ip:
+                        continue
+                    seen_ip.add(kp)
+                    deduped_ip.append(m)
+                # Split across sources to keep ordering stable
+                lane_local_pools["trending"] = deduped_ip[:]
+                lane_local_pools["popular"] = []
 
             # Build unseen candidates from Trakt listings, filtered by lane rules
             def _keypair(m: dict[str, Any]) -> tuple[str, int | None]:
