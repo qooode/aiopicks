@@ -2690,7 +2690,9 @@ class CatalogService:
                 pool_order = ("related", "recommended", "trending", "popular")
             # Use lane-local pools if we constructed them above (e.g., international, people)
             if lane_local_pools is None and not all(candidate_cache[content_type].get(src) for src in pool_order):
-                genres_filter = list(include or []) if include else None
+                # IMPORTANT: Build the shared candidate cache with broad filters only.
+                # Lane-specific genre/language constraints are applied later by apply_filters.
+                genres_filter = None
                 lang_counts: Counter[str] = Counter(
                     [
                         (m.get("language") or "").strip().lower()
@@ -2698,7 +2700,7 @@ class CatalogService:
                         if isinstance(m.get("language"), str) and m.get("language").strip()
                     ]
                 )
-                top_langs = [l for l, _ in lang_counts.most_common(3) if l]
+                top_langs: list[str] = []
 
                 # Personalized recommendations (if available)
                 try:
@@ -2778,8 +2780,8 @@ class CatalogService:
                                 content_type,
                                 list_type=src,
                                 total_limit=min(max(item_limit * 6, 200), 800),
-                                genres=genres_filter,
-                                languages=(top_langs or None) if item_limit <= 80 else None,
+                                genres=None,
+                                languages=None,
                                 client_id=trakt_client_id,
                                 access_token=trakt_access_token,
                             )
@@ -2788,8 +2790,8 @@ class CatalogService:
                                 content_type,
                                 list_type=src,
                                 limit=min(max(item_limit * 2, 30), 100),
-                                genres=genres_filter,
-                                languages=top_langs or None,
+                                genres=None,
+                                languages=None,
                                 client_id=trakt_client_id,
                                 access_token=trakt_access_token,
                             )
@@ -2858,9 +2860,14 @@ class CatalogService:
 
             # Resolve pools for this lane (use local override if present)
             pools = lane_local_pools if lane_local_pools is not None else candidate_cache[content_type]
+            # Determine source iteration order: prioritise lane-local pools if provided
+            if lane_local_pools is not None:
+                source_order = list(lane_local_pools.keys()) + [s for s in pool_order if s not in lane_local_pools]
+            else:
+                source_order = list(pool_order)
 
             # Phase 1: strict filters, prefer recommended/related first
-            for src in pool_order:
+            for src in source_order:
                 _try_collect(
                     pools.get(src, []),
                     include_genres=include,
@@ -2875,7 +2882,7 @@ class CatalogService:
                 saved_lang, saved_rt = lang_pred, rt_pred
                 # Keep language strict for dedicated international lane
                 new_lang = saved_lang if keep_language_strict else None
-                for src in pool_order:
+                for src in source_order:
                     _try_collect(
                         pools.get(src, []),
                         include_genres=include,
@@ -2887,7 +2894,7 @@ class CatalogService:
                         break
             # Phase 3: relax genres entirely (except lanes where genre must stay strict)
             if len(lane) < item_limit:
-                for src in pool_order:
+                for src in source_order:
                     _try_collect(
                         pools.get(src, []),
                         include_genres=(include if keep_genre_strict else None),
@@ -2901,7 +2908,7 @@ class CatalogService:
 
             # Phase 4: final fill allowing previously served titles if still short
             if len(lane) < item_limit and served_fps:
-                for src in pool_order:
+                for src in source_order:
                     _try_collect(
                         pools.get(src, []),
                         include_genres=(include if keep_genre_strict else None),
