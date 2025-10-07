@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -30,6 +31,7 @@ class TraktClient:
     def __init__(self, settings: Settings, http_client: httpx.AsyncClient):
         self._settings = settings
         self._client = http_client
+        self._max_retries = 3
 
     def _headers(
         self,
@@ -39,6 +41,7 @@ class TraktClient:
     ) -> dict[str, str]:
         headers = {
             "trakt-api-version": "2",
+            "User-Agent": f"{self._settings.app_name} (aiopicks)",
         }
         resolved_client_id = client_id or self._settings.trakt_client_id
         resolved_access_token = access_token or self._settings.trakt_access_token
@@ -90,22 +93,64 @@ class TraktClient:
                 "page": page,
                 "extended": "full",
             }
-            response = await self._client.get(
-                url,
-                headers=self._headers(
-                    client_id=resolved_client_id, access_token=resolved_access_token
-                ),
-                params=params,
-            )
-            if response.status_code >= 400:
-                logger.warning(
-                    "Failed to fetch Trakt history for %s: %s",
-                    content_type,
-                    response.text,
-                )
-                return HistoryBatch(items=[], total=0, fetched=False)
+            # Retry on transient errors (timeouts, 5xx)
+            attempt = 0
+            while True:
+                try:
+                    response = await self._client.get(
+                        url,
+                        headers=self._headers(
+                            client_id=resolved_client_id, access_token=resolved_access_token
+                        ),
+                        params=params,
+                    )
+                except httpx.HTTPError as exc:
+                    attempt += 1
+                    if attempt <= self._max_retries:
+                        backoff = min(2 ** (attempt - 1), 5) + (0.1 * attempt)
+                        logger.info(
+                            "Transient error talking to Trakt (%s). Retrying page %s in %.1fs",
+                            exc.__class__.__name__,
+                            page,
+                            backoff,
+                        )
+                        await asyncio.sleep(backoff)
+                        continue
+                    logger.warning(
+                        "Failed to fetch Trakt history for %s (page %s): %s",
+                        content_type,
+                        page,
+                        exc,
+                    )
+                    # Return what we've collected so far; mark as not fully fetched
+                    return HistoryBatch(items=collected, total=total or len(collected), fetched=False)
 
-            data = response.json()
+                # HTTP response received
+                if 500 <= response.status_code < 600:
+                    attempt += 1
+                    if attempt <= self._max_retries:
+                        backoff = min(2 ** (attempt - 1), 5) + (0.1 * attempt)
+                        logger.info(
+                            "Trakt 5xx during history fetch for %s (page %s). Retrying in %.1fs",
+                            content_type,
+                            page,
+                            backoff,
+                        )
+                        await asyncio.sleep(backoff)
+                        continue
+                    logger.warning(
+                        "Failed to fetch Trakt history for %s: %s",
+                        content_type,
+                        response.text,
+                    )
+                    return HistoryBatch(items=collected, total=total or len(collected), fetched=False)
+                break
+
+            try:
+                data = response.json()
+            except ValueError:
+                logger.warning("Unexpected non-JSON Trakt response for %s history", content_type)
+                return HistoryBatch(items=collected, total=total or len(collected), fetched=False)
             if not isinstance(data, list):
                 logger.warning("Unexpected Trakt response structure for %s", content_type)
                 return HistoryBatch(items=[], total=0, fetched=False)
@@ -136,6 +181,8 @@ class TraktClient:
                     break
 
             page += 1
+            # Small delay to avoid hammering Cloudflare during large histories
+            await asyncio.sleep(0.1)
 
         if target is not None and len(collected) > target:
             collected = collected[:target]
@@ -157,16 +204,46 @@ class TraktClient:
             logger.info("Trakt credentials missing, returning empty stats")
             return {}
 
-        response = await self._client.get(
-            "/users/me/stats",
-            headers=self._headers(
-                client_id=resolved_client_id, access_token=resolved_access_token
-            ),
-        )
-        if response.status_code >= 400:
-            logger.warning("Failed to fetch Trakt stats: %s", response.text)
+        attempt = 0
+        while True:
+            try:
+                response = await self._client.get(
+                    "/users/me/stats",
+                    headers=self._headers(
+                        client_id=resolved_client_id, access_token=resolved_access_token
+                    ),
+                )
+            except httpx.HTTPError as exc:
+                attempt += 1
+                if attempt <= self._max_retries:
+                    backoff = min(2 ** (attempt - 1), 5) + (0.1 * attempt)
+                    logger.info(
+                        "Transient error talking to Trakt stats (%s). Retrying in %.1fs",
+                        exc.__class__.__name__,
+                        backoff,
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+                logger.warning("Failed to fetch Trakt stats: %s", exc)
+                return {}
+            if 500 <= response.status_code < 600:
+                attempt += 1
+                if attempt <= self._max_retries:
+                    backoff = min(2 ** (attempt - 1), 5) + (0.1 * attempt)
+                    logger.info(
+                        "Trakt 5xx during stats fetch. Retrying in %.1fs",
+                        backoff,
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+                logger.warning("Failed to fetch Trakt stats: %s", response.text)
+                return {}
+            break
+
+        try:
+            data = response.json()
+        except ValueError:
             return {}
-        data = response.json()
         if not isinstance(data, dict):
             logger.warning("Unexpected Trakt stats response structure")
             return {}
