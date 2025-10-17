@@ -21,6 +21,7 @@ from .services.metadata_addon import MetadataAddonClient
 from .services.catalog_generator import CatalogService
 from .services.catalog_generator import ManifestConfig
 from .services.openrouter import OpenRouterClient
+from .services.openai import OpenAIClient
 from .services.trakt import TraktClient
 from .web import render_config_page
 
@@ -45,6 +46,12 @@ async def lifespan(_: FastAPI):
             timeout=httpx.Timeout(60.0, connect=10.0),
         )
     )
+    openai_client = await exit_stack.enter_async_context(
+        httpx.AsyncClient(
+            base_url=str(settings.openai_api_url),
+            timeout=httpx.Timeout(60.0, connect=10.0),
+        )
+    )
     metadata_client_kwargs: dict[str, Any] = {
         "timeout": httpx.Timeout(15.0, connect=5.0)
     }
@@ -58,6 +65,7 @@ async def lifespan(_: FastAPI):
 
     trakt = TraktClient(settings, trakt_client)
     openrouter = OpenRouterClient(settings, openrouter_client)
+    openai = OpenAIClient(settings, openai_client)
     default_metadata_addon = (
         str(settings.metadata_addon_url)
         if settings.metadata_addon_url is not None
@@ -67,7 +75,7 @@ async def lifespan(_: FastAPI):
         metadata_http_client, default_metadata_addon
     )
     catalog_service = CatalogService(
-        settings, trakt, openrouter, metadata_client, database.session_factory
+        settings, trakt, openrouter, openai, metadata_client, database.session_factory
     )
 
     app.state.catalog_service = catalog_service

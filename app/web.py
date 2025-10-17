@@ -395,9 +395,10 @@ CONFIG_TEMPLATE = dedent(
                 <p class="description">Choose how many AI generated catalogs to expose and copy a ready-to-install manifest URL. Empty fields fall back to the server defaults.</p>
                 <p class="notice hidden" id="manifest-lock">Sign in with Trakt to unlock personalised manifest links.</p>
                 <div class="field">
-                    <label for="config-engine">Discovery engine <span class="helper">Use AI via OpenRouter or Local (offline)</span></label>
+                    <label for="config-engine">Discovery engine <span class="helper">Use AI via OpenRouter, OpenAI, or Local (offline)</span></label>
                     <select id="config-engine">
                         <option value="openrouter">AI via OpenRouter</option>
+                        <option value="openai">AI via OpenAI</option>
                         <option value="local">Local (offline, history-based)</option>
                     </select>
                 </div>
@@ -408,6 +409,14 @@ CONFIG_TEMPLATE = dedent(
                 <div class="field">
                     <label for="config-openrouter-model">Model <span class="helper">Default: __OPENROUTER_MODEL__</span></label>
                     <input id="config-openrouter-model" type="text" placeholder="google/gemini-2.5-flash-lite" />
+                </div>
+                <div class="field" id="openai-key-field" style="display:none;">
+                    <label for="config-openai-key">OpenAI API key <span class="helper">Required – stored on server per profile.</span></label>
+                    <input id="config-openai-key" type="text" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+                </div>
+                <div class="field" id="openai-model-field" style="display:none;">
+                    <label for="config-openai-model">OpenAI model <span class="helper">Default: gpt-5-mini-2025-08-07</span></label>
+                    <input id="config-openai-model" type="text" placeholder="gpt-5-mini-2025-08-07" />
                 </div>
                 <div class="field">
                     <label for="config-metadata-addon">Metadata add-on URL <span class="helper">Required – used to fetch posters and IDs</span></label>
@@ -476,6 +485,10 @@ CONFIG_TEMPLATE = dedent(
             const numberFormatter = new Intl.NumberFormat();
             const openrouterKey = document.getElementById('config-openrouter-key');
             const openrouterModel = document.getElementById('config-openrouter-model');
+            const openaiKey = document.getElementById('config-openai-key');
+            const openaiModel = document.getElementById('config-openai-model');
+            const openaiKeyField = document.getElementById('openai-key-field');
+            const openaiModelField = document.getElementById('openai-model-field');
             const metadataAddonInput = document.getElementById('config-metadata-addon');
             const catalogLaneContainer = document.getElementById('catalog-lane-list');
             const catalogLaneWarning = document.getElementById('catalog-lane-warning');
@@ -746,6 +759,9 @@ CONFIG_TEMPLATE = dedent(
 
             engineSelect.value = (defaults.generatorMode || 'local');
             openrouterModel.value = defaults.openrouterModel || '';
+            if (openaiModel) {
+                openaiModel.value = (defaults.openaiModel || '');
+            }
             metadataAddonInput.value = defaults.metadataAddon || '';
             const defaultCatalogItems = defaults.catalogItemCount || catalogItemsSlider.min || 4;
             catalogItemsSlider.value = defaultCatalogItems;
@@ -834,7 +850,20 @@ CONFIG_TEMPLATE = dedent(
                 updateManifestPreview();
                 // Persist engine change so manifest/profile endpoints respect it
                 scheduleProfilePersist();
+                updateAiFieldVisibility();
             });
+            function updateAiFieldVisibility() {
+                const mode = (engineSelect.value || 'openrouter');
+                const showOpenRouter = mode === 'openrouter';
+                const showOpenAI = mode === 'openai';
+                const keyField = openrouterKey && openrouterKey.closest('.field');
+                const modelField = openrouterModel && openrouterModel.closest('.field');
+                if (keyField) keyField.style.display = showOpenRouter ? '' : 'none';
+                if (modelField) modelField.style.display = showOpenRouter ? '' : 'none';
+                if (openaiKeyField) openaiKeyField.style.display = showOpenAI ? '' : 'none';
+                if (openaiModelField) openaiModelField.style.display = showOpenAI ? '' : 'none';
+            }
+            updateAiFieldVisibility();
             refreshSelect.addEventListener('change', () => {
                 ensureOption(refreshSelect, refreshSelect.value, formatSeconds(Number(refreshSelect.value)));
                 markProfileDirty();
@@ -1113,14 +1142,22 @@ CONFIG_TEMPLATE = dedent(
             }
 
             function updateEngineUi() {
-                const useLocal = (document.getElementById('config-engine')?.value || 'openrouter') === 'local';
+                const usingOpenRouter = engineSelect.value === 'openrouter';
+                const usingOpenAI = engineSelect.value === 'openai';
                 const keyField = openrouterKey && openrouterKey.closest('.field');
                 const modelField = openrouterModel && openrouterModel.closest('.field');
-                const retryField = generationRetriesSlider && generationRetriesSlider.closest('.field');
-                [keyField, modelField, retryField].forEach((el) => {
-                    if (!el) return;
-                    el.classList.toggle('hidden', useLocal);
-                });
+                if (keyField) {
+                    keyField.classList.toggle('hidden', !(usingOpenRouter));
+                }
+                if (modelField) {
+                    modelField.classList.toggle('hidden', !(usingOpenRouter));
+                }
+                if (openaiKeyField) {
+                    openaiKeyField.classList.toggle('hidden', !usingOpenAI);
+                }
+                if (openaiModelField) {
+                    openaiModelField.classList.toggle('hidden', !usingOpenAI);
+                }
             }
 
             function scheduleStatusPoll(delay = 4000) {
@@ -1238,6 +1275,8 @@ CONFIG_TEMPLATE = dedent(
                     engine: engineSelect.value,
                     openrouterKey: openrouterKey.value.trim(),
                     openrouterModel: openrouterModel.value.trim(),
+                    openaiKey: (openaiKey ? openaiKey.value.trim() : ''),
+                    openaiModel: (openaiModel ? openaiModel.value.trim() : ''),
                     metadataAddon: metadataAddonInput.value.trim(),
                     catalogKeys: getSelectedCatalogKeys(),
                     catalogItems: catalogItemsSlider.value,
@@ -1262,6 +1301,8 @@ CONFIG_TEMPLATE = dedent(
                 if (settings.engine) payload.engine = settings.engine;
                 if (settings.openrouterKey) payload.openrouterKey = settings.openrouterKey;
                 if (settings.openrouterModel) payload.openrouterModel = settings.openrouterModel;
+                if (settings.openaiKey) payload.openaiKey = settings.openaiKey;
+                if (settings.openaiModel) payload.openaiModel = settings.openaiModel;
                 if (Array.isArray(settings.catalogKeys) && settings.catalogKeys.length > 0) {
                     payload.catalogKeys = settings.catalogKeys;
                 }
@@ -1811,6 +1852,7 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
         "manifestName": settings.app_name,
         "generatorMode": getattr(settings, "generator_mode", "openrouter"),
         "openrouterModel": settings.openrouter_model,
+        "openaiModel": getattr(settings, "openai_model", ""),
         "catalogItemCount": settings.catalog_item_count,
         "catalogKeys": list(settings.catalog_keys),
         "generationRetryLimit": settings.generation_retry_limit,

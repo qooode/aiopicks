@@ -31,6 +31,7 @@ from ..stable_catalogs import STABLE_CATALOGS, StableCatalogDefinition
 from ..utils import slugify
 from .metadata_addon import MetadataAddonClient, MetadataMatch
 from .openrouter import OpenRouterClient
+from .openai import OpenAIClient
 from .trakt import HistoryBatch, TraktClient
 
 logger = logging.getLogger(__name__)
@@ -51,10 +52,19 @@ class ManifestConfig(BaseModel):
         default=None,
         validation_alias=AliasChoices("openrouterModel", "openRouterModel"),
     )
+    # OpenAI overrides
+    openai_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("openaiKey", "openAIKey"),
+    )
+    openai_model: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("openaiModel", "openAIModel"),
+    )
     generator_mode: str | None = Field(
         default=None,
         validation_alias=AliasChoices("engine", "generator", "mode", "discoveryEngine"),
-        description="Discovery engine selection: 'openrouter' or 'local'",
+        description="Discovery engine selection: 'openrouter', 'openai', or 'local'",
     )
     manifest_name: str | None = Field(
         default=None,
@@ -202,6 +212,8 @@ class ManifestConfig(BaseModel):
         lowered = value.strip().lower()
         if lowered in {"openrouter", "ai", "llm"}:
             return "openrouter"
+        if lowered in {"openai", "open-ai"}:
+            return "openai"
         if lowered in {"local", "offline"}:
             return "local"
         raise ValueError("generator mode must be 'openrouter' or 'local'")
@@ -230,6 +242,9 @@ class ProfileState:
     trakt_show_history_count: int = 0
     trakt_history_refreshed_at: datetime | None = None
     trakt_history_snapshot: dict[str, Any] | None = None
+    # OpenAI credentials
+    openai_api_key: str = ""
+    openai_model: str = ""
 
 
 @dataclass
@@ -262,6 +277,7 @@ class ProfileStatus:
             "profileId": self.state.id,
             "generator": self.state.generator_mode,
             "openrouterModel": self.state.openrouter_model,
+            "openaiModel": self.state.openai_model,
             "catalogItemCount": self.state.catalog_item_count,
             "catalogKeys": list(self.state.catalog_keys),
             "generationRetryLimit": self.state.generation_retry_limit,
@@ -315,12 +331,14 @@ class CatalogService:
         settings: Settings,
         trakt_client: TraktClient,
         openrouter_client: OpenRouterClient,
+        openai_client: OpenAIClient,
         metadata_client: MetadataAddonClient,
         session_factory: async_sessionmaker[AsyncSession],
     ):
         self._settings = settings
         self._trakt = trakt_client
-        self._ai = openrouter_client
+        self._openrouter = openrouter_client
+        self._openai = openai_client
         self._metadata_client = metadata_client
         self._session_factory = session_factory
         self._default_metadata_addon_url = getattr(
@@ -559,7 +577,14 @@ class CatalogService:
         exclusion_payload = self._serialise_watched_index(watched_index)
         definitions = self._definitions_for_keys(state.catalog_keys)
 
-        use_local = (getattr(state, "generator_mode", "openrouter") == "local") or (not bool(state.openrouter_api_key))
+        mode = getattr(state, "generator_mode", "openrouter")
+        use_local = False
+        if mode == "local":
+            use_local = True
+        elif mode == "openrouter" and not bool(state.openrouter_api_key):
+            use_local = True
+        elif mode == "openai" and not bool(getattr(state, "openai_api_key", "")):
+            use_local = True
 
         if use_local:
             catalogs = await self._generate_local_catalogs(
@@ -576,7 +601,18 @@ class CatalogService:
             await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
         else:
             try:
-                bundle = await self._ai.generate_catalogs(
+                if mode == "openai":
+                    bundle = await self._openai.generate_catalogs(
+                        summary,
+                        seed=seed,
+                        api_key=state.openai_api_key,
+                        model=(state.openai_model or self._settings.openai_model),
+                        exclusions=exclusion_payload,
+                        retry_limit=state.generation_retry_limit,
+                        definitions=definitions,
+                    )
+                else:
+                    bundle = await self._openrouter.generate_catalogs(
                     summary,
                     seed=seed,
                     api_key=state.openrouter_api_key,
@@ -584,7 +620,7 @@ class CatalogService:
                     exclusions=exclusion_payload,
                     retry_limit=state.generation_retry_limit,
                     definitions=definitions,
-                )
+                    )
                 catalogs = self._bundle_to_dict(bundle)
                 self._prune_watched_items(catalogs, watched_index)
                 await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
@@ -699,6 +735,8 @@ class CatalogService:
             id=profile.id,
             openrouter_api_key=profile.openrouter_api_key,
             openrouter_model=profile.openrouter_model,
+            openai_api_key=getattr(profile, "openai_api_key", ""),
+            openai_model=getattr(profile, "openai_model", ""),
             generator_mode=getattr(profile, "generator_mode", "openrouter") or "openrouter",
             trakt_client_id=profile.trakt_client_id,
             trakt_access_token=profile.trakt_access_token,
@@ -1129,6 +1167,10 @@ class CatalogService:
             digest = hashlib.sha256(config.openrouter_key.encode("utf-8")).hexdigest()[:12]
             return ProfileIdentity(id=f"user-{digest}")
 
+        if config.openai_key:
+            digest = hashlib.sha256(config.openai_key.encode("utf-8")).hexdigest()[:12]
+            return ProfileIdentity(id=f"user-{digest}")
+
         return ProfileIdentity(id="default")
 
     async def _resolve_profile(self, config: ManifestConfig) -> ProfileContext:
@@ -1148,12 +1190,12 @@ class CatalogService:
                 )
                 desired_mode = desired_mode or "openrouter"
                 openrouter_key = config.openrouter_key or self._settings.openrouter_api_key
+                openai_key = config.openai_key or self._settings.openai_api_key
                 if desired_mode == "openrouter" and not openrouter_key:
                     # No key provided for AI mode; fall back to local
                     desired_mode = "local"
-                if desired_mode == "openrouter" and not openrouter_key:
-                    # Still missing, be explicit
-                    raise ValueError("An OpenRouter API key is required for AI mode.")
+                if desired_mode == "openai" and not openai_key:
+                    desired_mode = "local"
                 metadata_addon = (
                     str(config.metadata_addon_url)
                     if config.metadata_addon_url is not None
@@ -1165,6 +1207,8 @@ class CatalogService:
                     display_name=identity.display_name,
                     openrouter_api_key=openrouter_key or "",
                     openrouter_model=config.openrouter_model or self._settings.openrouter_model,
+                    openai_api_key=openai_key or "",
+                    openai_model=config.openai_model or self._settings.openai_model,
                     generator_mode=desired_mode,
                     catalog_count=len(selected_keys),
                     catalog_keys=list(selected_keys),
@@ -1218,6 +1262,12 @@ class CatalogService:
                     refresh_required = True
                 if config.openrouter_model and config.openrouter_model != profile.openrouter_model:
                     profile.openrouter_model = config.openrouter_model
+                    refresh_required = True
+                if config.openai_key and config.openai_key != getattr(profile, "openai_api_key", ""):
+                    profile.openai_api_key = config.openai_key
+                    refresh_required = True
+                if config.openai_model and config.openai_model != getattr(profile, "openai_model", ""):
+                    profile.openai_model = config.openai_model
                     refresh_required = True
                 if config.generator_mode is not None:
                     new_mode = config.generator_mode
@@ -1386,12 +1436,15 @@ class CatalogService:
             if profile is None:
                 # Decide default generator mode
                 default_mode = getattr(self._settings, "generator_mode", "openrouter")
-                use_ai = default_mode == "openrouter" and bool(self._settings.openrouter_api_key)
+                use_openrouter = default_mode == "openrouter" and bool(self._settings.openrouter_api_key)
+                use_openai = default_mode == "openai" and bool(self._settings.openai_api_key)
                 profile = Profile(
                     id="default",
-                    openrouter_api_key=(self._settings.openrouter_api_key or "") if use_ai else "",
+                    openrouter_api_key=(self._settings.openrouter_api_key or "") if use_openrouter else "",
                     openrouter_model=self._settings.openrouter_model,
-                    generator_mode=("openrouter" if use_ai else "local"),
+                    openai_api_key=(self._settings.openai_api_key or "") if use_openai else "",
+                    openai_model=self._settings.openai_model,
+                    generator_mode=("openrouter" if use_openrouter else ("openai" if use_openai else "local")),
                     trakt_client_id=self._settings.trakt_client_id,
                     trakt_access_token=self._settings.trakt_access_token,
                     trakt_history_limit=self._settings.trakt_history_limit,
@@ -1429,11 +1482,19 @@ class CatalogService:
                 if not profile.openrouter_model:
                     profile.openrouter_model = self._settings.openrouter_model
                     updated = True
+                if not profile.openai_api_key and self._settings.openai_api_key:
+                    profile.openai_api_key = self._settings.openai_api_key
+                    updated = True
+                if not profile.openai_model:
+                    profile.openai_model = self._settings.openai_model
+                    updated = True
                 # Keep generator_mode in sync with settings if missing
                 if not getattr(profile, "generator_mode", None):
                     profile.generator_mode = getattr(self._settings, "generator_mode", "openrouter")
                     # If AI selected but no key, force local
                     if profile.generator_mode == "openrouter" and not self._settings.openrouter_api_key:
+                        profile.generator_mode = "local"
+                    if profile.generator_mode == "openai" and not self._settings.openai_api_key:
                         profile.generator_mode = "local"
                     updated = True
                 if getattr(profile, "catalog_item_count", None) != self._settings.catalog_item_count:
