@@ -108,6 +108,15 @@ class Database:
             "ALTER TABLE profiles ADD COLUMN generator_mode VARCHAR(32) DEFAULT 'local'",
             "UPDATE profiles SET generator_mode = 'local' WHERE generator_mode IS NULL",
         )
+        # OpenAI (direct) credentials are optional; default to empty strings
+        _ensure_column(
+            "openai_api_key",
+            "ALTER TABLE profiles ADD COLUMN openai_api_key TEXT DEFAULT ''",
+        )
+        _ensure_column(
+            "openai_model",
+            "ALTER TABLE profiles ADD COLUMN openai_model VARCHAR(200) DEFAULT ''",
+        )
 
     async def dispose(self) -> None:
         """Dispose of the underlying database engine."""

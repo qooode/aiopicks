@@ -46,8 +46,8 @@ class Settings(BaseSettings):
         default="google/gemini-2.5-flash-lite", alias="OPENROUTER_MODEL"
     )
 
-    # Discovery engine selection: "openrouter" (AI) or "local"
-    generator_mode: Literal["openrouter", "local"] = Field(
+    # Discovery engine selection: "openrouter", "openai", or "local"
+    generator_mode: Literal["openrouter", "openai", "local"] = Field(
         default="local", alias="GENERATOR_MODE"
     )
 
@@ -83,6 +83,16 @@ class Settings(BaseSettings):
     )
     openrouter_api_url: HttpUrl = Field(
         default="https://openrouter.ai/api/v1", alias="OPENROUTER_API_URL"
+    )
+    # OpenAI (direct) configuration
+    openai_api_key: str | None = Field(
+        default=None, alias="OPENAI_API_KEY"
+    )
+    openai_model: str = Field(
+        default="gpt-5-mini-2025-08-07", alias="OPENAI_MODEL"
+    )
+    openai_api_url: HttpUrl = Field(
+        default="https://api.openai.com/v1", alias="OPENAI_API_URL"
     )
     metadata_addon_url: HttpUrl | None = Field(
         default=None,
